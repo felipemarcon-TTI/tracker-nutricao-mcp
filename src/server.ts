@@ -199,6 +199,13 @@ server.tool("executar_sql", "Executa SQL ad-hoc no banco.", { sql: z.string() },
 
 const app = express();
 app.set("trust proxy", 1);
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept");
+  if (req.method === "OPTIONS") { res.status(204).end(); return; }
+  next();
+});
 const PORT = parseInt(process.env.PORT || "8000", 10);
 const transports = new Map<string, SSEServerTransport>();
 
