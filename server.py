@@ -279,6 +279,7 @@ _auth_codes: dict = {}
 
 @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
 async def oauth_meta(request: Request) -> JSONResponse:
+    return JSONResponse({"error":"not_found"},status_code=404)
     proto = request.headers.get("x-forwarded-proto") or request.headers.get("x-forwarded-scheme") or "https"
     host = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or request.headers.get("host", "localhost")
     b = proto + "://" + host
