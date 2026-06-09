@@ -225,6 +225,11 @@ app.get("/.well-known/oauth-authorization-server", (req: Request, res: Response)
 });
 
 // OAuth: authorization endpoint — auto-aprova e redireciona com code
+app.post("/register", express.json(), (req: Request, res: Response) => {
+  const u = req.body?.redirect_uris || [];
+  res.status(201).json({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, client_id_issued_at: Math.floor(Date.now()/1000), client_secret_expires_at: 0, redirect_uris: u, grant_types: ["authorization_code"], response_types: ["code"], token_endpoint_auth_method: "client_secret_post" });
+});
+
 app.get("/authorize", (req: Request, res: Response) => {
   const { redirect_uri, state, client_id } = req.query as Record<string, string>;
   if (client_id !== CLIENT_ID) { res.status(400).send("invalid client_id"); return; }
