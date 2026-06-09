@@ -279,7 +279,6 @@ _auth_codes: dict = {}
 
 @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
 async def oauth_meta(request: Request) -> JSONResponse:
-    return JSONResponse({"error":"not_found"},status_code=404)
     proto = request.headers.get("x-forwarded-proto") or request.headers.get("x-forwarded-scheme") or "https"
     host = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or request.headers.get("host", "localhost")
     b = proto + "://" + host
@@ -289,7 +288,7 @@ async def oauth_meta(request: Request) -> JSONResponse:
 async def oauth_reg(request: Request) -> JSONResponse:
     try: body = await request.json()
     except Exception: body = {}
-    return JSONResponse({"client_id":CLIENT_ID,"client_secret":CLIENT_SECRET,"client_id_issued_at":int(time.time()),"client_secret_expires_at":0,"redirect_uris":body.get("redirect_uris",[]),"grant_types":["authorization_code"],"response_types":["code"],"token_endpoint_auth_method":"client_secret_post"},status_code=201)
+    return JSONResponse({"client_id":CLIENT_ID,"client_secret":CLIENT_SECRET,"client_id_issued_at":int(time.time()),"client_secret_expires_at":0,"redirect_uris":body.get("redirect_uris",[]),"grant_types":["client_credentials"],"response_types":[],"token_endpoint_auth_method":"client_secret_basic"},status_code=201)
 
 @mcp.custom_route("/oauth/authorize", methods=["GET"])
 async def oauth_auth(request: Request) -> Response:
@@ -348,7 +347,7 @@ async def oauth_tok(request: Request) -> JSONResponse:
         return JSONResponse({"access_token":AUTH_TOKEN,"token_type":"Bearer","expires_in":31536000})
     return JSONResponse({"error":"unsupported_grant_type"},status_code=400)
 
-_OPEN = {"/mcp/"}
+_OPEN = {"/.well-known/oauth-authorization-server","/oauth/register","/oauth/authorize","/oauth/authorize/confirm","/oauth/token","/"}
 
 class _Auth(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
