@@ -347,7 +347,7 @@ async def oauth_tok(request: Request) -> JSONResponse:
         return JSONResponse({"access_token":AUTH_TOKEN,"token_type":"Bearer","expires_in":31536000})
     return JSONResponse({"error":"unsupported_grant_type"},status_code=400)
 
-_OPEN = {"/.well-known/oauth-authorization-server","/oauth/register","/oauth/authorize","/oauth/authorize/confirm","/oauth/token","/"}
+_OPEN = {"/.well-known/oauth-authorization-server","/oauth/register","/oauth/authorize","/oauth/authorize/confirm","/oauth/token","/","/mcp/"}
 
 class _Auth(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
