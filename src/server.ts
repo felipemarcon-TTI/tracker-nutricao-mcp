@@ -210,7 +210,9 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
 
 // OAuth: metadados do servidor
 app.get("/.well-known/oauth-authorization-server", (req: Request, res: Response) => {
-  const proto = req.headers["x-forwarded-proto"] || req.protocol;`n  const host = process.env.RAILWAY_PUBLIC_DOMAIN || req.get("host");`n  const base = `${proto}://${host}`;
+  const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol;
+  const host = process.env.RAILWAY_PUBLIC_DOMAIN || req.get("host") || "localhost";
+  const base = proto + "://" + host;
   res.json({
     issuer: base,
     authorization_endpoint: `${base}/authorize`,
