@@ -360,4 +360,4 @@ if __name__ == "__main__":
     app = mcp.sse_app()
     app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_methods=["*"],allow_headers=["*"])
     app.add_middleware(_Auth)
-    uvicorn.run(app,host="0.0.0.0",port=PORT,proxy_headers=True,forwarded_allow_ips="*")
+    uvicorn.run(app,host="0.0.0.0",port=PORT)
