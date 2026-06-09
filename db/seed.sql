@@ -1,4 +1,4 @@
-﻿-- Seed: Catalogo de exercicios de musculacao
+-- Seed: Catalogo de exercicios de musculacao
 -- 70 exercicios cobrindo todos os grupos musculares
 
 INSERT INTO exercises (name, muscle_group, secondary_muscles, equipment, movement_pattern, difficulty) VALUES

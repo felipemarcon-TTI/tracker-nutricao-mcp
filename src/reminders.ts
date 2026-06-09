@@ -1,4 +1,4 @@
-﻿import { needsReminderBodyMetrics, lastMetricDate } from "./metrics";
+import { needsReminderBodyMetrics, lastMetricDate } from "./metrics";
 
 export interface Reminder {
   type: string;

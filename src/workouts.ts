@@ -1,4 +1,4 @@
-﻿import { query } from "./db";
+import { query } from "./db";
 
 export async function upsertExercise(name: string, muscleGroup?: string, equipment?: string): Promise<number> {
   const res = await query(

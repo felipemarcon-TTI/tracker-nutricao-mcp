@@ -1,4 +1,4 @@
-﻿import { query } from "./db";
+import { query } from "./db";
 import { getDailyTotals, PLANO_METAS } from "./meals";
 
 function pct(val: number, target: number): string {

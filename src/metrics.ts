@@ -1,4 +1,4 @@
-﻿import { query } from "./db";
+import { query } from "./db";
 
 export async function insertMetric(params: {
   measurement_date: string;

@@ -1,4 +1,4 @@
-﻿# Tracker de Nutricao e Treino — Felipe
+# Tracker de Nutricao e Treino — Felipe
 
 Servidor MCP TypeScript para acompanhamento alimentar e de treino via claude.ai.
 

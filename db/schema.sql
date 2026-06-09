@@ -1,4 +1,4 @@
-﻿-- Tracker de Nutricao e Treino - Felipe
+-- Tracker de Nutricao e Treino - Felipe
 -- Schema PostgreSQL
 
 CREATE TABLE IF NOT EXISTS meals (

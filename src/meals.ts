@@ -1,4 +1,4 @@
-﻿import { query } from "./db";
+import { query } from "./db";
 
 // Metas do plano da Helena Ferretti S. Proenica (CRN 5545N, 06/10/2025)
 export const PLANO_METAS = {
