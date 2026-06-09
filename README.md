@@ -84,3 +84,5 @@ src/
   reminders.ts     # Lembretes
   server.ts        # Servidor MCP (entry point)
 ```
+
+<!-- redeploy: 2026-06-09 14:09 -->
