@@ -279,7 +279,9 @@ _auth_codes: dict = {}
 
 @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
 async def oauth_meta(request: Request) -> JSONResponse:
-    b = str(request.base_url).rstrip("/")
+    proto = request.headers.get("x-forwarded-proto", "https")
+    host = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or request.headers.get("host", "localhost")
+    b = proto + "://" + host
     return JSONResponse({"issuer":b,"authorization_endpoint":b+"/oauth/authorize","token_endpoint":b+"/oauth/token","registration_endpoint":b+"/oauth/register","response_types_supported":["code"],"grant_types_supported":["authorization_code","client_credentials"],"code_challenge_methods_supported":["S256","plain"]})
 
 @mcp.custom_route("/oauth/register", methods=["POST"])
