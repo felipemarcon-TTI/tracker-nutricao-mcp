@@ -242,11 +242,21 @@ app.get("/authorize", (req: Request, res: Response) => {
   const { redirect_uri, state, client_id } = req.query as Record<string, string>;
   if (client_id !== CLIENT_ID) { res.status(400).send("invalid client_id"); return; }
   const code = `code-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  authCodes.set(code, redirect_uri);
-  const url = new URL(redirect_uri);
-  url.searchParams.set("code", code);
-  if (state) url.searchParams.set("state", state);
-  res.redirect(url.toString());
+  authCodes.set(code, redirect_uri || "");
+  const q = new URLSearchParams({ code, redirect_uri: redirect_uri || "", state: state || "" }).toString();
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Tracker Nutricao</title><style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4ff}.card{background:white;padding:2rem;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1);text-align:center;max-width:420px;width:90%}h2{margin:0 0 .5rem}p{color:#555;margin:0 0 1.5rem}.btn{display:inline-block;background:#2563eb;color:white;text-decoration:none;padding:.75rem 2rem;border-radius:8px;font-size:1rem}</style></head><body><div class="card"><h2>Tracker Nutricao</h2><p>O Claude.ai pretende aceder ao teu tracker de nutricao e treino.</p><a class="btn" href="/authorize/confirm?`${q}`">Autorizar Acesso</a></div></body></html>`;
+  res.send(html);
+});
+
+app.get("/authorize/confirm", (req: Request, res: Response) => {
+  const { code, redirect_uri, state } = req.query as Record<string, string>;
+  if (!code || !authCodes.has(code)) { res.status(400).send("Codigo invalido"); return; }
+  try {
+    const url = new URL(redirect_uri);
+    url.searchParams.set("code", code);
+    if (state) url.searchParams.set("state", state);
+    res.redirect(url.toString());
+  } catch { res.status(400).send("redirect_uri invalido"); }
 });
 
 // OAuth: token endpoint — troca code ou client_credentials por access_token
