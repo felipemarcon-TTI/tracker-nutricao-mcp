@@ -197,6 +197,7 @@ server.tool("executar_sql", "Executa SQL ad-hoc no banco.", { sql: z.string() },
 // EXPRESS + OAUTH + SSE
 // ──────────────────────────────────────────────────────────────
 
+const app = express();
 app.set("trust proxy", 1);
 const PORT = parseInt(process.env.PORT || "8000", 10);
 const transports = new Map<string, SSEServerTransport>();
