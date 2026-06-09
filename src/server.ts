@@ -218,6 +218,7 @@ app.get("/.well-known/oauth-authorization-server", (req: Request, res: Response)
     issuer: base,
     authorization_endpoint: `${base}/authorize`,
     token_endpoint: `${base}/token`,
+    registration_endpoint: `${base}/register`,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "client_credentials"],
     code_challenge_methods_supported: ["S256", "plain"],
