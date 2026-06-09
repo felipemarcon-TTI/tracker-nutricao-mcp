@@ -196,7 +196,8 @@ server.tool("executar_sql", "Executa SQL ad-hoc no banco.", { sql: z.string() },
 // ──────────────────────────────────────────────────────────────
 // EXPRESS + OAUTH + SSE
 // ──────────────────────────────────────────────────────────────
-const app = express();
+
+app.set("trust proxy", 1);
 const PORT = parseInt(process.env.PORT || "8000", 10);
 const transports = new Map<string, SSEServerTransport>();
 
@@ -209,7 +210,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
 
 // OAuth: metadados do servidor
 app.get("/.well-known/oauth-authorization-server", (req: Request, res: Response) => {
-  const base = `${req.protocol}://${req.get("host")}`;
+  const proto = req.headers["x-forwarded-proto"] || req.protocol;`n  const host = process.env.RAILWAY_PUBLIC_DOMAIN || req.get("host");`n  const base = `${proto}://${host}`;
   res.json({
     issuer: base,
     authorization_endpoint: `${base}/authorize`,
