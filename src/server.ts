@@ -238,11 +238,22 @@ app.get("/authorize", (req: Request, res: Response) => {
 
 // OAuth: token endpoint — troca code ou client_credentials por access_token
 app.post("/token", express.urlencoded({ extended: true }), express.json(), (req: Request, res: Response) => {
-  const { client_id, client_secret, grant_type } = req.body;
-  if (client_id !== CLIENT_ID || client_secret !== CLIENT_SECRET) {
-    res.status(401).json({ error: "invalid_client" }); return;
+  const body = req.body || {};
+  const grant_type = body.grant_type;
+  let client_id = body.client_id;
+  let client_secret = body.client_secret;
+  const ah = req.headers.authorization || "";
+  if (ah.startsWith("Basic ")) {
+    const dec = Buffer.from(ah.slice(6), "base64").toString();
+    const sep = dec.indexOf(":");
+    client_id = client_id || dec.substring(0, sep);
+    client_secret = client_secret || dec.substring(sep + 1);
   }
-  if (grant_type === "authorization_code" || grant_type === "client_credentials") {
+  if (client_id !== CLIENT_ID) { res.status(401).json({ error: "invalid_client" }); return; }
+  if (grant_type === "authorization_code") {
+    res.json({ access_token: ACCESS_TOKEN, token_type: "Bearer", expires_in: 31536000 });
+  } else if (grant_type === "client_credentials") {
+    if (client_secret !== CLIENT_SECRET) { res.status(401).json({ error: "invalid_client" }); return; }
     res.json({ access_token: ACCESS_TOKEN, token_type: "Bearer", expires_in: 31536000 });
   } else {
     res.status(400).json({ error: "unsupported_grant_type" });
