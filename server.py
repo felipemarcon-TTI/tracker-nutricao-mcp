@@ -279,7 +279,7 @@ _auth_codes: dict = {}
 
 @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
 async def oauth_meta(request: Request) -> JSONResponse:
-    proto = request.headers.get("x-forwarded-proto", "https")
+    proto = request.headers.get("x-forwarded-proto") or request.headers.get("x-forwarded-scheme") or "https"
     host = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or request.headers.get("host", "localhost")
     b = proto + "://" + host
     return JSONResponse({"issuer":b,"authorization_endpoint":b+"/oauth/authorize","token_endpoint":b+"/oauth/token","registration_endpoint":b+"/oauth/register","response_types_supported":["code"],"grant_types_supported":["authorization_code","client_credentials"],"code_challenge_methods_supported":["S256","plain"]})
@@ -360,4 +360,4 @@ if __name__ == "__main__":
     app = mcp.sse_app()
     app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_methods=["*"],allow_headers=["*"])
     app.add_middleware(_Auth)
-    uvicorn.run(app,host="0.0.0.0",port=PORT)
+    uvicorn.run(app,host="0.0.0.0",port=PORT,proxy_headers=True,forwarded_allow_ips="*")
