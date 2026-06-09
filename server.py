@@ -357,6 +357,6 @@ class _Auth(BaseHTTPMiddleware):
 
 if __name__ == "__main__":
     from starlette.middleware.cors import CORSMiddleware
-    app = mcp.sse_app()
+    app = mcp.streamable_http_app()
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     uvicorn.run(_Auth(app), host="0.0.0.0", port=PORT)
