@@ -147,23 +147,26 @@ def atualizar_refeicao(
     return f"Refeicao ID {id} nao encontrada." if n == 0 else f"Refeicao ID {id} atualizada ({len(campos)} campo(s))."
 
 @mcp.tool()
-def listar_refeicoes(data_inicio: str = None, data_fim: str = None) -> str:
-    """Lista refeicoes de um periodo com todos os campos nutricionais (padrao: hoje)."""
-    inicio = data_inicio or _hoje()
-    fim = data_fim or inicio
-    rows = db_q(
+def listar_refeicoes(data: str = None, data_inicio: str = None, data_fim: str = None) -> str:
+    """Lista refeicoes filtrando por meal_time. data: dia exato; data_inicio/data_fim: range. Padrao: hoje."""
+    sel = (
         "SELECT id, meal_time AT TIME ZONE 'Europe/Lisbon' as t, meal_type, description, "
         "is_on_plan, calories, protein_g, carbs_g, fat_g, fiber_g, "
         "calcium_mg, iron_mg, magnesium_mg, potassium_mg, sodium_mg, "
         "vitamin_c_mg, vitamin_d_mcg, vitamin_b12_mcg, zinc_mg, notes "
         "FROM meals "
-        "WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date BETWEEN %s AND %s "
-        "OR (meal_time IS NULL AND (logged_at AT TIME ZONE 'Europe/Lisbon')::date BETWEEN %s AND %s) "
-        "ORDER BY COALESCE(meal_time, logged_at)",
-        [inicio, fim, inicio, fim])
+    )
+    if data:
+        rows = db_q(sel + "WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date = %s ORDER BY meal_time", [data])
+        label = data
+    else:
+        inicio = data_inicio or _hoje()
+        fim = data_fim or inicio
+        rows = db_q(sel + "WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date BETWEEN %s AND %s ORDER BY meal_time", [inicio, fim])
+        label = inicio if inicio == fim else f"{inicio} a {fim}"
     if not rows:
-        return f"Nenhuma refeicao entre {inicio} e {fim}."
-    linhas = [f"Refeicoes {inicio} a {fim} ({len(rows)} registros):"]
+        return f"Nenhuma refeicao em {label}."
+    linhas = [f"Refeicoes {label} ({len(rows)} registros):"]
     for r in rows:
         h = r["t"].strftime("%H:%M") if r["t"] else "--:--"
         kcal = f"{float(r['calories']):.0f}kcal" if r["calories"] else "?"
