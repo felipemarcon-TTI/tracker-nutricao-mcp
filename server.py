@@ -27,6 +27,20 @@ METAS = {
     "vit_c": 39.9, "vit_d": 1.9, "vit_b12": 1.8, "zn": 6.6,
 }
 
+# Semanas consecutivas abaixo da meta para atingir red_flag (sodio: acima da meta)
+ESCALATION_THRESHOLDS = {
+    "zinco_mg": 2, "potassio_mg": 2, "vitamina_c_mg": 2,
+    "ferro_mg": 3, "magnesio_mg": 3, "calcio_mg": 3,
+    "vitamina_d_mcg": 5, "vitamina_b12_mcg": 6,
+    "sodio_mg": 3,
+}
+
+def _nivel_escalacao(weeks_below: int, threshold: int) -> str:
+    if weeks_below >= threshold + 2: return "encaminhar"
+    if weeks_below >= threshold:     return "red_flag"
+    if weeks_below >= 2:             return "reforco"
+    return "sugestao"
+
 def _db():
     url = DATABASE_URL
     if "railway" in url and "sslmode" not in url:
@@ -238,6 +252,72 @@ def resumo_micronutrientes(dias: int = 7) -> str:
         f"Vit B12:  total {f(r['vitb12_t']):.1f}mcg | media {f(r['vitb12_a']):.1f}mcg/dia | meta {m['vit_b12']}mcg",
         f"Zinco:    total {f(r['zn_t']):.1f}mg  | media {f(r['zn_a']):.1f}mg/dia  | meta {m['zn']}mg",
     ])
+
+@mcp.tool()
+def verificar_alertas() -> str:
+    """Retorna alertas de micronutrientes ativos e resolvidos nos ultimos 30 dias."""
+    ativos = db_q(
+        "SELECT id, nutrient, weeks_below, escalation_level, escalation_threshold, "
+        "last_suggestion, first_flagged_at, last_reviewed_at "
+        "FROM nutrient_alerts WHERE is_active = TRUE "
+        "ORDER BY CASE escalation_level WHEN 'encaminhar' THEN 0 WHEN 'red_flag' THEN 1 "
+        "WHEN 'reforco' THEN 2 ELSE 3 END, weeks_below DESC"
+    )
+    recentes = db_q(
+        "SELECT id, nutrient, weeks_below, escalation_level, resolved_at "
+        "FROM nutrient_alerts WHERE is_active = FALSE AND resolved_at >= CURRENT_DATE - 30 "
+        "ORDER BY resolved_at DESC"
+    )
+    resultado = {
+        "alertas_ativos": [dict(r) for r in ativos],
+        "alertas_resolvidos_recentes": [dict(r) for r in recentes],
+    }
+    return json.dumps(resultado, default=str, ensure_ascii=False, indent=2)
+
+@mcp.tool()
+def registrar_alerta(nutrient: str, suggestion: str, avg_daily_intake: float, target: float) -> str:
+    """Cria ou incrementa alerta de micronutriente. Chame quando analise semanal detecta valor fora da meta.
+    Para sodio, chame quando avg_daily_intake > target. Para os demais, quando < target."""
+    threshold = ESCALATION_THRESHOLDS.get(nutrient, 3)
+    hoje = _hoje()
+    existing = db_q(
+        "SELECT id, weeks_below FROM nutrient_alerts WHERE nutrient=%s AND is_active=TRUE", [nutrient]
+    )
+    if existing:
+        weeks = existing[0]["weeks_below"] + 1
+        nivel = _nivel_escalacao(weeks, threshold)
+        db_e(
+            "UPDATE nutrient_alerts SET weeks_below=%s, escalation_level=%s, "
+            "last_suggestion=%s, last_reviewed_at=%s WHERE id=%s",
+            [weeks, nivel, suggestion, hoje, existing[0]["id"]]
+        )
+        msg = f"Alerta '{nutrient}' atualizado: semana {weeks}, nivel '{nivel}'"
+        if nivel == "encaminhar":
+            msg += " — ENCAMINHAR para nutricionista."
+        elif nivel == "red_flag":
+            msg += " — RED FLAG."
+        return msg
+    else:
+        db_e(
+            "INSERT INTO nutrient_alerts "
+            "(nutrient, first_flagged_at, weeks_below, escalation_level, escalation_threshold, "
+            "last_suggestion, last_reviewed_at) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            [nutrient, hoje, 1, "sugestao", threshold, suggestion, hoje]
+        )
+        return f"Alerta '{nutrient}' criado: semana 1, nivel 'sugestao'. Meta:{target}, media:{avg_daily_intake:.1f}."
+
+@mcp.tool()
+def resolver_alerta(nutrient: str) -> str:
+    """Marca alerta de micronutriente como resolvido quando o nutriente volta a meta."""
+    hoje = _hoje()
+    n = db_e(
+        "UPDATE nutrient_alerts SET is_active=FALSE, resolved_at=%s "
+        "WHERE nutrient=%s AND is_active=TRUE",
+        [hoje, nutrient]
+    )
+    if n == 0:
+        return f"Nenhum alerta ativo para '{nutrient}'."
+    return f"Alerta '{nutrient}' resolvido em {hoje}."
 
 @mcp.tool()
 def historico_treino(dias: int = 30) -> str:

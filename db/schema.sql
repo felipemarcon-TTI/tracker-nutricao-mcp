@@ -103,8 +103,24 @@ CREATE TABLE IF NOT EXISTS workout_sets (
     alternative_for VARCHAR(150)
 );
 
+CREATE TABLE IF NOT EXISTS nutrient_alerts (
+    id SERIAL PRIMARY KEY,
+    nutrient VARCHAR(50) NOT NULL,
+    first_flagged_at DATE NOT NULL,
+    weeks_below INTEGER DEFAULT 1,
+    escalation_level VARCHAR(20) DEFAULT 'sugestao',
+    escalation_threshold INTEGER NOT NULL,
+    last_suggestion TEXT,
+    last_reviewed_at DATE,
+    resolved_at DATE,
+    is_active BOOLEAN DEFAULT TRUE,
+    notes TEXT
+);
+
 -- Indices para performance
 CREATE INDEX IF NOT EXISTS idx_meals_meal_time ON meals(meal_time);
+CREATE INDEX IF NOT EXISTS idx_nutrient_alerts_nutrient ON nutrient_alerts(nutrient);
+CREATE INDEX IF NOT EXISTS idx_nutrient_alerts_active ON nutrient_alerts(is_active);
 CREATE INDEX IF NOT EXISTS idx_meals_logged_at ON meals(logged_at);
 CREATE INDEX IF NOT EXISTS idx_daily_summary_date ON daily_summary(summary_date);
 CREATE INDEX IF NOT EXISTS idx_body_metrics_date ON body_metrics(measurement_date);
