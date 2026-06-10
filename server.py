@@ -21,6 +21,12 @@ CLIENT_SECRET = os.environ.get("MCP_OAUTH_CLIENT_SECRET", "tracker-nutricao")
 
 mcp = FastMCP("Tracker Nutricao e Treino")
 
+METAS = {
+    "cal": 2253, "prot": 183.3, "carbs": 231.9, "fat": 70.7, "fibra": 17.7,
+    "ca": 1145.1, "mg": 218.5, "fe": 7.3, "k": 3199.0, "na": 885.7,
+    "vit_c": 39.9, "vit_d": 1.9, "vit_b12": 1.8, "zn": 6.6,
+}
+
 def _db():
     url = DATABASE_URL
     if "railway" in url and "sslmode" not in url:
@@ -52,111 +58,6 @@ def db_e(sql, params=None):
     finally:
         c.close()
 
-NUTRI = {
-    # Formato: [kcal, prot_g, carb_g, fat_g, fibra_g, ca_mg, fe_mg, mg_mg, k_mg, na_mg, vitc_mg, vitd_mcg, vitb12_mcg, zn_mg]
-    # Fonte: TACO (Tabela Brasileira de Composicao de Alimentos) e USDA — valores por 100g
-    "bife":     [145, 22.0,  0.0,  6.0, 0.0,  9, 2.5, 20, 290,  60,  0, 0.1, 2.0, 4.5],
-    "frango":   [159, 32.4,  0.0,  2.7, 0.0, 11, 0.9, 28, 250,  66,  0, 0.1, 0.3, 0.9],
-    "carne":    [200, 28.0,  0.0,  9.5, 0.0,  9, 2.5, 20, 290,  60,  0, 0.1, 2.4, 4.5],
-    "salmao":   [164, 23.0,  0.0,  7.3, 0.0, 15, 0.5, 30, 450,  55,  3,10.0, 3.0, 0.5],
-    "atum":     [110, 23.0,  0.0,  1.7, 0.0, 12, 0.7, 28, 280,  40,  0, 4.0, 2.0, 0.5],
-    "peixe":    [105, 22.0,  0.0,  2.0, 0.0, 25, 0.5, 26, 380,  60,  0, 3.0, 1.5, 0.5],
-    "sashimi":  [135, 21.0,  0.0,  5.0, 0.0, 15, 0.5, 28, 400,  50,  0, 8.0, 2.5, 0.5],
-    "ovo":      [143, 13.0,  0.7,  9.5, 0.0, 50, 1.8, 10, 130, 140,  0, 2.2, 0.9, 1.1],
-    "bacon":    [540, 37.0,  1.3, 42.0, 0.0,  8, 1.0, 18, 350,1700,  0, 0.4, 0.5, 2.0],
-    "presunto": [115, 16.0,  2.0,  5.0, 0.0,  8, 0.8, 12, 200, 860,  0, 0.1, 0.5, 1.5],
-    "arroz":    [128,  2.5, 27.9,  0.2, 1.6,  4, 0.3, 12,  47,   1,  0, 0.0, 0.0, 0.5],
-    "batata":   [ 82,  2.0, 18.9,  0.1, 1.8,  6, 0.7, 22, 407,   6, 20, 0.0, 0.0, 0.4],
-    "mandioca": [125,  0.9, 30.1,  0.3, 1.9, 16, 0.5, 21, 271,   7, 19, 0.0, 0.0, 0.2],
-    "massa":    [158,  5.8, 30.9,  0.9, 1.8,  7, 0.8, 18,  44,   5,  0, 0.0, 0.0, 0.5],
-    "pao":      [264,  8.5, 49.7,  3.5, 2.8, 30, 2.1, 20, 100, 460,  0, 0.0, 0.0, 0.6],
-    "tapioca":  [141,  0.3, 36.0,  0.0, 0.4,  4, 0.2,  2,  11,   2,  0, 0.0, 0.0, 0.1],
-    "aveia":    [394, 14.0, 67.0,  8.0, 9.1, 47, 4.7,130, 400,   2,  0, 0.0, 0.0, 3.9],
-    "feijao":   [ 77,  4.8, 13.6,  0.5, 8.4, 29, 1.5, 37, 255,   3,  1, 0.0, 0.0, 0.8],
-    "lentilha": [ 93,  7.6, 15.6,  0.4, 5.4, 25, 2.5, 35, 280,   2,  2, 0.0, 0.0, 1.3],
-    "brocolos": [ 34,  2.8,  4.4,  0.4, 3.3, 47, 0.9, 21, 316,  33, 91, 0.0, 0.0, 0.7],
-    "salada":   [ 17,  1.3,  2.9,  0.2, 1.8, 36, 0.7, 12, 170,  25, 12, 0.0, 0.0, 0.2],
-    "cenoura":  [ 35,  0.9,  8.0,  0.2, 3.0, 33, 0.3, 11, 320,  69,  6, 0.0, 0.0, 0.2],
-    "tomate":   [ 18,  0.9,  3.9,  0.2, 1.2, 11, 0.3, 11, 237,   9, 22, 0.0, 0.0, 0.2],
-    "espinafre":[ 22,  2.9,  3.6,  0.4, 2.4, 99, 2.7, 79, 558,  79, 28, 0.0, 0.0, 0.5],
-    "queijo":   [355, 24.0,  1.0, 28.0, 0.0,700, 0.4, 25,  90, 620,  0, 0.3, 0.8, 3.0],
-    "iogurte":  [ 61,  5.0,  4.0,  3.3, 0.0,120, 0.0, 11, 160,  60,  0, 0.0, 0.4, 0.5],
-    "leite":    [ 61,  3.2,  4.8,  3.2, 0.0,120, 0.1, 11, 150,  50,  0, 1.1, 0.4, 0.4],
-    "whey":     [373, 78.0,  8.0,  5.0, 0.0,200, 2.0, 60, 500, 200,  0, 1.0, 1.5, 4.0],
-    "banana":   [ 92,  1.3, 23.8,  0.1, 1.9,  5, 0.3, 27, 376,   1,  9, 0.0, 0.0, 0.2],
-    "laranja":  [ 47,  0.9, 11.7,  0.1, 2.4, 40, 0.1, 10, 181,   0, 53, 0.0, 0.0, 0.1],
-    "amendoim": [567, 25.8, 16.1, 49.2, 8.5, 92, 4.6,168, 705,  18,  0, 0.0, 0.0, 3.3],
-    "azeite":   [868,  0.0,  0.0,100.0, 0.0,  1, 0.1,  0,   0,   1,  0, 0.0, 0.0, 0.0],
-    "oleo":     [868,  0.0,  0.0,100.0, 0.0,  1, 0.1,  0,   0,   1,  0, 0.0, 0.0, 0.0],
-    "mel":      [304,  0.3, 82.4,  0.0, 0.2,  6, 0.4,  2,  52,   4,  1, 0.0, 0.0, 0.2],
-    "chocolate":[540,  6.0, 60.0, 31.0, 4.0, 50, 3.5, 65, 400,  20,  0, 0.0, 0.0, 1.5],
-    "sorvete":  [207,  3.5, 23.6, 11.0, 0.0,148, 0.1, 14, 170,  55,  1, 0.1, 0.3, 0.4],
-    "gelato":   [207,  3.5, 23.6, 11.0, 0.0,148, 0.1, 14, 170,  55,  1, 0.1, 0.3, 0.4],
-    "pizza":    [266, 11.0, 33.0, 10.0, 2.0,150, 1.5, 18, 172, 600,  2, 0.1, 0.3, 1.2],
-    "cafe":     [  2,  0.3,  0.3,  0.0, 0.0,  4, 0.1,  7, 100,   5,  0, 0.0, 0.0, 0.0],
-}
-
-# Fast food: valores por unidade completa (nao por 100g) — BK / McDonalds aproximado
-_FAST = {
-    "x-burger":            [490, 28, 41, 21, 2, 200, 3.0, 30, 400,  900, 0, 0, 0, 4.0],
-    "x-burguer":           [490, 28, 41, 21, 2, 200, 3.0, 30, 400,  900, 0, 0, 0, 4.0],
-    "x-salada":            [530, 30, 43, 23, 2, 200, 3.0, 30, 400,  900, 0, 0, 0, 4.0],
-    "double cheeseburger": [450, 25, 34, 24, 1, 150, 3.0, 25, 350,  950, 0, 0, 0, 3.5],
-    "cheeseburger":        [300, 15, 33, 13, 1, 100, 2.0, 20, 280,  680, 0, 0, 0, 2.5],
-    "big mac":             [563, 26, 44, 31, 3, 200, 3.5, 35, 450, 1010, 0, 0, 0, 4.0],
-    "whopper":             [660, 28, 49, 40, 3, 180, 4.0, 35, 550,  980, 0, 0, 0, 5.0],
-    "hamburguer":          [255, 13, 30, 10, 1,  80, 2.0, 18, 250,  500, 0, 0, 0, 2.5],
-    "hamburger":           [255, 13, 30, 10, 1,  80, 2.0, 18, 250,  500, 0, 0, 0, 2.5],
-    "fritas":              [315,  4, 41, 15, 3,  15, 0.8, 27, 560,  290,12, 0, 0, 0.5],
-}
-
-# Porcoes padrao (em multiplos de 100g) quando usuario nao especifica gramas
-_PORCAO = {
-    "ovo": 0.6, "banana": 1.2, "pao": 0.5, "laranja": 1.5,
-    "feijao": 1.5, "batata": 1.5, "mandioca": 1.5, "lentilha": 1.5,
-    "brocolos": 1.0, "salada": 1.0, "cenoura": 1.0, "tomate": 1.0,
-    "espinafre": 1.0, "carne": 1.5, "bife": 1.5, "frango": 1.5,
-}
-
-def _norm(s):
-    import unicodedata
-    return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode().lower()
-
-def _estimar(desc):
-    d = _norm(desc)
-    d = re.sub(r'\b(vazia|alcatra|maminha|patinho|contrafile|fraldinha|picanha|acem|musculo|lagarto|coxao|chuleta)\b', 'bife', d)
-    d = re.sub(r'\b(brocolis|brocolo)\b', 'brocolos', d)
-    d = re.sub(r'\b(macarrao|espaguete|espagueti|fusilli|penne|talharim)\b', 'massa', d)
-    d = re.sub(r'\b(tilapia|merluza|robalo|dourada|corvina|bacalhau)\b', 'peixe', d)
-    d = re.sub(r'batata\s+doce', 'batata', d)
-    d = re.sub(r'peixe\s+(?:cru\s+)?sashimi', 'sashimi', d)
-    t = [0.0] * 14
-    ok = False
-    # Processar do keyword mais longo ao mais curto para evitar double-match
-    todos = sorted(
-        [('f:' + kw, v, True) for kw, v in _FAST.items()] +
-        [('n:' + kw, v, False) for kw, v in NUTRI.items()],
-        key=lambda x: -len(x[0])
-    )
-    for key, v, is_fast in todos:
-        kw = key[2:]
-        if kw not in d:
-            continue
-        if is_fast:
-            m = re.search(r'(\d+)\s*(?:x\s*)?' + re.escape(kw), d)
-            qty = int(m.group(1)) if m else 1
-            for i in range(14): t[i] += v[i] * qty
-        else:
-            m = re.search(r'(\d+(?:[.,]\d+)?)\s*g(?:r(?:amas?)?)?\s*(?:de\s+)?' + re.escape(kw), d)
-            if not m:
-                m = re.search(re.escape(kw) + r'[^0-9]{0,15}(\d+(?:[.,]\d+)?)\s*g', d)
-            if not m:
-                m = re.search(r'(\d{2,4})\s+(?:de\s+)?' + re.escape(kw), d)
-            mult = float(m.group(1).replace(',', '.')) / 100 if m else _PORCAO.get(kw, 1.0)
-            for i in range(14): t[i] += v[i] * mult
-        ok = True
-        d = d.replace(kw, '_' * len(kw), 1)
-    return [round(x, 2) for x in t] if ok else None
 def _hoje(): return datetime.now(LISBOA).strftime("%Y-%m-%d")
 
 @mcp.tool()
@@ -184,38 +85,180 @@ def verificar_lembretes() -> str:
     return "Nenhum lembrete pendente."
 
 @mcp.tool()
-def registrar_refeicao(descricao: str, tipo: str = None, horario: str = None, seguiu_plano: bool = None, notas: str = None) -> str:
-    """Registra refeicao com estimativa de macros. tipo: cafe_manha|almoco|lanche|jantar|ceia|pre_treino|outro"""
+def registrar_refeicao(
+    descricao: str,
+    tipo: str = None, horario: str = None, seguiu_plano: bool = None, notas: str = None,
+    calorias: float = None, proteina_g: float = None, carbs_g: float = None,
+    gordura_g: float = None, fibra_g: float = None,
+    calcio_mg: float = None, ferro_mg: float = None, magnesio_mg: float = None,
+    potassio_mg: float = None, sodio_mg: float = None,
+    vitamina_c_mg: float = None, vitamina_d_mcg: float = None,
+    vitamina_b12_mcg: float = None, zinco_mg: float = None,
+) -> str:
+    """Registra refeicao. Macros/micros opcionais — enviar valores calculados pelo Claude. tipo: cafe_manha|almoco|lanche|jantar|ceia|pre_treino|outro"""
     mt = None
     if horario:
         mt = horario if ("T" in horario or "-" in horario) else _hoje() + "T" + horario + ":00"
-    m = _estimar(descricao)
-    macros = m if m else [None]*14
     rid = db_e(
-        "INSERT INTO meals (meal_time,meal_type,description,is_on_plan,notes,calories,protein_g,carbs_g,fat_g,fiber_g,calcium_mg,iron_mg,magnesium_mg,potassium_mg,sodium_mg,vitamin_c_mg,vitamin_d_mcg,vitamin_b12_mcg,zinc_mg) "
+        "INSERT INTO meals (meal_time,meal_type,description,is_on_plan,notes,"
+        "calories,protein_g,carbs_g,fat_g,fiber_g,calcium_mg,iron_mg,magnesium_mg,"
+        "potassium_mg,sodium_mg,vitamin_c_mg,vitamin_d_mcg,vitamin_b12_mcg,zinc_mg) "
         "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-        [mt,tipo,descricao,seguiu_plano,notas] + macros
+        [mt, tipo, descricao, seguiu_plano, notas,
+         calorias, proteina_g, carbs_g, gordura_g, fibra_g,
+         calcio_mg, ferro_mg, magnesio_mg, potassio_mg, sodio_mg,
+         vitamina_c_mg, vitamina_d_mcg, vitamina_b12_mcg, zinco_mg]
     )
-    linhas = [f"Refeicao registrada (ID {rid})"]
-    if m: linhas.append(f"Estimativa: {m[0]:.0f} kcal | Prot: {m[1]:.1f}g | Carbs: {m[2]:.1f}g | Gord: {m[3]:.1f}g")
-    else: linhas.append("Macros nao estimados — alimento nao reconhecido.")
+    partes = [f"Refeicao registrada (ID {rid})"]
+    if calorias is not None:
+        partes.append(f"{calorias:.0f} kcal | Prot:{proteina_g or 0:.1f}g | Carbs:{carbs_g or 0:.1f}g | Gord:{gordura_g or 0:.1f}g")
+    else:
+        partes.append("Macros nao informados.")
+    return "\n".join(partes)
+
+@mcp.tool()
+def atualizar_refeicao(
+    id: int,
+    descricao: str = None, tipo: str = None, horario: str = None,
+    seguiu_plano: bool = None, notas: str = None,
+    calorias: float = None, proteina_g: float = None, carbs_g: float = None,
+    gordura_g: float = None, fibra_g: float = None,
+    calcio_mg: float = None, ferro_mg: float = None, magnesio_mg: float = None,
+    potassio_mg: float = None, sodio_mg: float = None,
+    vitamina_c_mg: float = None, vitamina_d_mcg: float = None,
+    vitamina_b12_mcg: float = None, zinco_mg: float = None,
+) -> str:
+    """Atualiza campos de uma refeicao existente por ID. Apenas campos informados sao alterados."""
+    campos = {
+        "description": descricao, "meal_type": tipo, "is_on_plan": seguiu_plano, "notes": notas,
+        "calories": calorias, "protein_g": proteina_g, "carbs_g": carbs_g, "fat_g": gordura_g,
+        "fiber_g": fibra_g, "calcium_mg": calcio_mg, "iron_mg": ferro_mg,
+        "magnesium_mg": magnesio_mg, "potassium_mg": potassio_mg, "sodium_mg": sodio_mg,
+        "vitamin_c_mg": vitamina_c_mg, "vitamin_d_mcg": vitamina_d_mcg,
+        "vitamin_b12_mcg": vitamina_b12_mcg, "zinc_mg": zinco_mg,
+    }
+    if horario:
+        campos["meal_time"] = horario if ("T" in horario or "-" in horario) else _hoje() + "T" + horario + ":00"
+    campos = {k: v for k, v in campos.items() if v is not None}
+    if not campos:
+        return "Nenhum campo para atualizar."
+    sets = ", ".join(f"{k}=%s" for k in campos)
+    n = db_e(f"UPDATE meals SET {sets} WHERE id=%s", list(campos.values()) + [id])
+    return f"Refeicao ID {id} nao encontrada." if n == 0 else f"Refeicao ID {id} atualizada ({len(campos)} campo(s))."
+
+@mcp.tool()
+def listar_refeicoes(data_inicio: str = None, data_fim: str = None) -> str:
+    """Lista refeicoes de um periodo com todos os campos nutricionais (padrao: hoje)."""
+    inicio = data_inicio or _hoje()
+    fim = data_fim or inicio
+    rows = db_q(
+        "SELECT id, meal_time AT TIME ZONE 'Europe/Lisbon' as t, meal_type, description, "
+        "is_on_plan, calories, protein_g, carbs_g, fat_g, fiber_g, "
+        "calcium_mg, iron_mg, magnesium_mg, potassium_mg, sodium_mg, "
+        "vitamin_c_mg, vitamin_d_mcg, vitamin_b12_mcg, zinc_mg, notes "
+        "FROM meals "
+        "WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date BETWEEN %s AND %s "
+        "OR (meal_time IS NULL AND (logged_at AT TIME ZONE 'Europe/Lisbon')::date BETWEEN %s AND %s) "
+        "ORDER BY COALESCE(meal_time, logged_at)",
+        [inicio, fim, inicio, fim])
+    if not rows:
+        return f"Nenhuma refeicao entre {inicio} e {fim}."
+    linhas = [f"Refeicoes {inicio} a {fim} ({len(rows)} registros):"]
+    for r in rows:
+        h = r["t"].strftime("%H:%M") if r["t"] else "--:--"
+        kcal = f"{float(r['calories']):.0f}kcal" if r["calories"] else "?"
+        prot = f"{float(r['protein_g']):.1f}g" if r["protein_g"] else "?"
+        carbs = f"{float(r['carbs_g']):.1f}g" if r["carbs_g"] else "?"
+        fat = f"{float(r['fat_g']):.1f}g" if r["fat_g"] else "?"
+        linhas.append(f"ID:{r['id']} {h} [{r['meal_type'] or '-'}] {r['description']}")
+        linhas.append(f"  {kcal} | P:{prot} | C:{carbs} | G:{fat}")
     return "\n".join(linhas)
 
 @mcp.tool()
-def listar_refeicoes(data: str = None) -> str:
-    """Lista refeicoes de um dia (padrao: hoje em Lisboa)."""
+def resumo_diario(data: str = None) -> str:
+    """Totais nutricionais de um dia (padrao: hoje)."""
     d = data or _hoje()
-    rows = db_q(
-        "SELECT meal_time AT TIME ZONE 'Europe/Lisbon' as t, meal_type, description, is_on_plan, calories FROM meals "
-        "WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date = %s OR (meal_time IS NULL AND (logged_at AT TIME ZONE 'Europe/Lisbon')::date = %s) "
-        "ORDER BY COALESCE(meal_time,logged_at)", [d,d])
-    if not rows: return f"Nenhuma refeicao em {d}."
-    linhas = [f"Refeicoes em {d}:"]
-    for r in rows:
-        h = r["t"].strftime("%H:%M") if r["t"] else "--:--"
-        p = "sim" if r["is_on_plan"] else ("nao" if r["is_on_plan"] is False else "-")
-        k = f"{float(r['calories']):.0f} kcal" if r["calories"] else "sem est."
-        linhas.append(f"{h} [{r['meal_type'] or '-'}] {r['description']} | {k} | plano:{p}")
+    r = db_q(
+        "SELECT COUNT(*) as n, "
+        "COALESCE(SUM(calories),0) as cal, COALESCE(SUM(protein_g),0) as prot, "
+        "COALESCE(SUM(carbs_g),0) as carbs, COALESCE(SUM(fat_g),0) as fat, "
+        "COALESCE(SUM(fiber_g),0) as fiber "
+        "FROM meals "
+        "WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date=%s "
+        "OR (meal_time IS NULL AND (logged_at AT TIME ZONE 'Europe/Lisbon')::date=%s)", [d, d])[0]
+    m = METAS
+    def pct(v, g): return f"({float(v)/g*100:.0f}%)" if g else ""
+    return "\n".join([
+        f"Resumo {d} ({r['n']} refeicoes)",
+        f"Calorias: {float(r['cal']):.0f}/{m['cal']} kcal {pct(r['cal'], m['cal'])}",
+        f"Proteina: {float(r['prot']):.1f}/{m['prot']}g {pct(r['prot'], m['prot'])}",
+        f"Carbs:    {float(r['carbs']):.1f}/{m['carbs']}g {pct(r['carbs'], m['carbs'])}",
+        f"Gordura:  {float(r['fat']):.1f}/{m['fat']}g {pct(r['fat'], m['fat'])}",
+        f"Fibra:    {float(r['fiber']):.1f}/{m['fibra']}g {pct(r['fiber'], m['fibra'])}",
+    ])
+
+@mcp.tool()
+def resumo_micronutrientes(dias: int = 7) -> str:
+    """Totais e medias diarias de micronutrientes dos ultimos N dias."""
+    fim = _hoje()
+    inicio = (datetime.now(LISBOA) - timedelta(days=dias - 1)).strftime("%Y-%m-%d")
+    r = db_q(
+        "SELECT SUM(ca) as ca_t, AVG(ca) as ca_a, SUM(fe) as fe_t, AVG(fe) as fe_a, "
+        "SUM(mg) as mg_t, AVG(mg) as mg_a, SUM(k) as k_t, AVG(k) as k_a, "
+        "SUM(na) as na_t, AVG(na) as na_a, SUM(vitc) as vitc_t, AVG(vitc) as vitc_a, "
+        "SUM(vitd) as vitd_t, AVG(vitd) as vitd_a, "
+        "SUM(vitb12) as vitb12_t, AVG(vitb12) as vitb12_a, "
+        "SUM(zn) as zn_t, AVG(zn) as zn_a FROM ("
+        "  SELECT COALESCE(SUM(calcium_mg),0) as ca, COALESCE(SUM(iron_mg),0) as fe, "
+        "  COALESCE(SUM(magnesium_mg),0) as mg, COALESCE(SUM(potassium_mg),0) as k, "
+        "  COALESCE(SUM(sodium_mg),0) as na, COALESCE(SUM(vitamin_c_mg),0) as vitc, "
+        "  COALESCE(SUM(vitamin_d_mcg),0) as vitd, COALESCE(SUM(vitamin_b12_mcg),0) as vitb12, "
+        "  COALESCE(SUM(zinc_mg),0) as zn "
+        "  FROM meals "
+        "  WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date BETWEEN %s AND %s "
+        "  OR (meal_time IS NULL AND (logged_at AT TIME ZONE 'Europe/Lisbon')::date BETWEEN %s AND %s) "
+        "  GROUP BY COALESCE((meal_time AT TIME ZONE 'Europe/Lisbon')::date, "
+        "           (logged_at AT TIME ZONE 'Europe/Lisbon')::date)"
+        ") daily",
+        [inicio, fim, inicio, fim])[0]
+    f = lambda v: float(v or 0)
+    m = METAS
+    return "\n".join([
+        f"Micronutrientes {inicio} a {fim} ({dias} dias)",
+        f"Calcio:   total {f(r['ca_t']):.0f}mg  | media {f(r['ca_a']):.0f}mg/dia  | meta {m['ca']}mg",
+        f"Ferro:    total {f(r['fe_t']):.1f}mg  | media {f(r['fe_a']):.1f}mg/dia  | meta {m['fe']}mg",
+        f"Magnesio: total {f(r['mg_t']):.0f}mg  | media {f(r['mg_a']):.0f}mg/dia  | meta {m['mg']}mg",
+        f"Potassio: total {f(r['k_t']):.0f}mg  | media {f(r['k_a']):.0f}mg/dia  | meta {m['k']}mg",
+        f"Sodio:    total {f(r['na_t']):.0f}mg  | media {f(r['na_a']):.0f}mg/dia  | meta {m['na']}mg",
+        f"Vit C:    total {f(r['vitc_t']):.0f}mg  | media {f(r['vitc_a']):.0f}mg/dia  | meta {m['vit_c']}mg",
+        f"Vit D:    total {f(r['vitd_t']):.1f}mcg | media {f(r['vitd_a']):.1f}mcg/dia | meta {m['vit_d']}mcg",
+        f"Vit B12:  total {f(r['vitb12_t']):.1f}mcg | media {f(r['vitb12_a']):.1f}mcg/dia | meta {m['vit_b12']}mcg",
+        f"Zinco:    total {f(r['zn_t']):.1f}mg  | media {f(r['zn_a']):.1f}mg/dia  | meta {m['zn']}mg",
+    ])
+
+@mcp.tool()
+def historico_treino(dias: int = 30) -> str:
+    """Volume, frequencia e progressao de treino dos ultimos N dias."""
+    fim = _hoje()
+    inicio = (datetime.now(LISBOA) - timedelta(days=dias - 1)).strftime("%Y-%m-%d")
+    stats = db_q(
+        "SELECT COUNT(DISTINCT w.id) as treinos, COUNT(ws.id) as series, "
+        "COALESCE(SUM(ws.weight_kg * ws.reps), 0) as volume "
+        "FROM workouts w LEFT JOIN workout_sets ws ON ws.workout_id=w.id "
+        "WHERE w.workout_date BETWEEN %s AND %s AND NOT COALESCE(w.skipped, false)",
+        [inicio, fim])[0]
+    top = db_q(
+        "SELECT ws.exercise_name, COUNT(*) as series, MAX(ws.weight_kg) as carga_max "
+        "FROM workout_sets ws JOIN workouts w ON w.id=ws.workout_id "
+        "WHERE w.workout_date BETWEEN %s AND %s "
+        "GROUP BY ws.exercise_name ORDER BY series DESC LIMIT 5",
+        [inicio, fim])
+    linhas = [
+        f"Treinos {inicio} a {fim} ({dias} dias)",
+        f"Sessoes: {stats['treinos']} | Series: {stats['series']} | Volume total: {float(stats['volume']):.0f}kg",
+        "",
+        "Top exercicios (por series):",
+    ] + [f"  {r['exercise_name']}: {r['series']} series, carga max {r['carga_max']}kg" for r in top]
     return "\n".join(linhas)
 
 @mcp.tool()
