@@ -16,8 +16,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 PORT = int(os.environ.get("PORT", 8000))
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "tracker-nutricao-token")
-CLIENT_ID = os.environ.get("MCP_CLIENT_ID", "tracker-nutricao")
-CLIENT_SECRET = os.environ.get("MCP_CLIENT_SECRET", "changeme")
+CLIENT_ID = os.environ.get("MCP_OAUTH_CLIENT_ID", "tracker-nutricao")
+CLIENT_SECRET = os.environ.get("MCP_OAUTH_CLIENT_SECRET", "tracker-nutricao")
 
 mcp = FastMCP("Tracker Nutricao e Treino")
 
@@ -282,13 +282,7 @@ async def oauth_meta(request: Request) -> JSONResponse:
     proto = request.headers.get("x-forwarded-proto") or request.headers.get("x-forwarded-scheme") or "https"
     host = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or request.headers.get("host", "localhost")
     b = proto + "://" + host
-    return JSONResponse({"issuer":b,"authorization_endpoint":b+"/oauth/authorize","token_endpoint":b+"/oauth/token","registration_endpoint":b+"/oauth/register","response_types_supported":["code"],"grant_types_supported":["authorization_code","client_credentials"],"code_challenge_methods_supported":["S256","plain"]})
-
-@mcp.custom_route("/oauth/register", methods=["POST"])
-async def oauth_reg(request: Request) -> JSONResponse:
-    try: body = await request.json()
-    except Exception: body = {}
-    return JSONResponse({"client_id":CLIENT_ID,"client_secret":CLIENT_SECRET,"client_id_issued_at":int(time.time()),"client_secret_expires_at":0,"redirect_uris":body.get("redirect_uris",[]),"grant_types":["client_credentials"],"response_types":[],"token_endpoint_auth_method":"client_secret_basic"},status_code=201)
+    return JSONResponse({"issuer":b,"authorization_endpoint":b+"/oauth/authorize","token_endpoint":b+"/oauth/token","response_types_supported":["code"],"grant_types_supported":["authorization_code","client_credentials"],"code_challenge_methods_supported":["S256","plain"],"token_endpoint_auth_methods_supported":["client_secret_post","none"]})
 
 @mcp.custom_route("/oauth/authorize", methods=["GET"])
 async def oauth_auth(request: Request) -> Response:
@@ -299,7 +293,7 @@ async def oauth_auth(request: Request) -> Response:
     if not redirect_uri:
         return Response("redirect_uri obrigatorio", status_code=400)
     code = secrets.token_urlsafe(32)
-    _auth_codes[code] = {"uri": redirect_uri, "state": state, "exp": time.time() + 300}
+    _auth_codes[code] = {"uri": redirect_uri, "state": state, "exp": time.time() + 300, "code_challenge": p.get("code_challenge",""), "code_challenge_method": p.get("code_challenge_method","plain")}
     params = {"code": code}
     if state: params["state"] = state
     return RedirectResponse(f"{redirect_uri}?{_ue(params)}")
@@ -313,26 +307,41 @@ async def oauth_tok(request: Request) -> JSONResponse:
         from urllib.parse import parse_qs
         raw = await request.body()
         body = {k:v[0] for k,v in parse_qs(raw.decode()).items()}
-    cid = body.get("client_id","")
-    csec = body.get("client_secret","")
-    auth = request.headers.get("authorization","")
-    if auth.lower().startswith("basic "):
-        import base64 as b64m
-        try:
-            dec = b64m.b64decode(auth[6:]).decode()
-            sep = dec.index(":")
-            cid = cid or dec[:sep]; csec = csec or dec[sep+1:]
-        except Exception: pass
     grant = body.get("grant_type","")
-    if cid != CLIENT_ID: return JSONResponse({"error":"invalid_client"},status_code=401)
     if grant == "authorization_code":
-        return JSONResponse({"access_token":AUTH_TOKEN,"token_type":"Bearer","expires_in":31536000})
+        import hashlib, base64 as _b64
+        stored = _auth_codes.pop(body.get("code",""), None)
+        if not stored or time.time() > stored["exp"]:
+            return JSONResponse({"error":"invalid_grant"},status_code=400)
+        verifier = body.get("code_verifier","")
+        challenge = stored.get("code_challenge","")
+        if challenge and verifier:
+            method = stored.get("code_challenge_method","plain")
+            if method == "S256":
+                digest = hashlib.sha256(verifier.encode()).digest()
+                expected = _b64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+            else:
+                expected = verifier
+            if expected != challenge:
+                return JSONResponse({"error":"invalid_grant"},status_code=400)
+        return JSONResponse({"access_token":AUTH_TOKEN,"token_type":"Bearer","expires_in":86400})
     if grant == "client_credentials":
+        cid = body.get("client_id","")
+        csec = body.get("client_secret","")
+        auth = request.headers.get("authorization","")
+        if auth.lower().startswith("basic "):
+            import base64 as _b64
+            try:
+                dec = _b64.b64decode(auth[6:]).decode()
+                sep = dec.index(":")
+                cid = cid or dec[:sep]; csec = csec or dec[sep+1:]
+            except Exception: pass
+        if cid != CLIENT_ID: return JSONResponse({"error":"invalid_client"},status_code=401)
         if csec != CLIENT_SECRET: return JSONResponse({"error":"invalid_client"},status_code=401)
-        return JSONResponse({"access_token":AUTH_TOKEN,"token_type":"Bearer","expires_in":31536000})
+        return JSONResponse({"access_token":AUTH_TOKEN,"token_type":"Bearer","expires_in":86400})
     return JSONResponse({"error":"unsupported_grant_type"},status_code=400)
 
-_OPEN = {"/.well-known/oauth-authorization-server","/oauth/register","/oauth/authorize","/oauth/authorize/confirm","/oauth/token","/"}
+_OPEN = {"/.well-known/oauth-authorization-server","/oauth/authorize","/oauth/token","/"}
 
 class _Auth(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
