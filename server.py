@@ -292,32 +292,17 @@ async def oauth_reg(request: Request) -> JSONResponse:
 
 @mcp.custom_route("/oauth/authorize", methods=["GET"])
 async def oauth_auth(request: Request) -> Response:
+    from urllib.parse import urlencode as _ue
     p = dict(request.query_params)
-    if p.get("client_id","") != CLIENT_ID: return Response("invalid client_id",status_code=400)
+    redirect_uri = p.get("redirect_uri", "")
+    state = p.get("state", "")
+    if not redirect_uri:
+        return Response("redirect_uri obrigatorio", status_code=400)
     code = secrets.token_urlsafe(32)
-    _auth_codes[code] = {"uri":p.get("redirect_uri",""),"state":p.get("state",""),"exp":time.time()+300}
-    from urllib.parse import urlencode
-    q = urlencode({"code":code,"redirect_uri":p.get("redirect_uri",""),"state":p.get("state","")})
-    html = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Tracker Nutricao</title><style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4ff}.c{background:white;padding:2rem;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1);text-align:center;max-width:400px;width:90%}h2{margin:0 0 .5rem}p{color:#555;margin:0 0 1.5rem}.b{display:inline-block;background:#2563eb;color:white;text-decoration:none;padding:.75rem 2rem;border-radius:8px;font-size:1rem}</style></head><body><div class='c'><h2>Tracker Nutricao</h2><p>O Claude.ai pretende aceder ao teu tracker de nutricao e treino.</p><a class='b' href='/oauth/authorize/confirm?" + q + "'>Autorizar Acesso</a></div></body></html>"
-    return HTMLResponse(html)
-
-@mcp.custom_route("/oauth/authorize/confirm", methods=["GET"])
-async def oauth_confirm(request: Request) -> Response:
-    from urllib.parse import urlparse,urlencode,urlunparse,parse_qs
-    p = dict(request.query_params)
-    code = p.get("code","")
-    info = _auth_codes.get(code)
-    if not info or time.time() > info["exp"]: return Response("Codigo invalido",status_code=400)
-    uri = p.get("redirect_uri") or info["uri"]
-    state = p.get("state") or info["state"]
-    try:
-        parts = list(urlparse(uri))
-        q = parse_qs(parts[4])
-        q["code"] = [code]
-        if state: q["state"] = [state]
-        parts[4] = urlencode({k:v[0] for k,v in q.items()})
-        return RedirectResponse(urlunparse(parts))
-    except Exception: return Response("redirect_uri invalido",status_code=400)
+    _auth_codes[code] = {"uri": redirect_uri, "state": state, "exp": time.time() + 300}
+    params = {"code": code}
+    if state: params["state"] = state
+    return RedirectResponse(f"{redirect_uri}?{_ue(params)}")
 
 @mcp.custom_route("/oauth/token", methods=["POST"])
 async def oauth_tok(request: Request) -> JSONResponse:
