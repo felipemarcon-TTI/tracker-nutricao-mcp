@@ -341,16 +341,29 @@ async def oauth_tok(request: Request) -> JSONResponse:
         return JSONResponse({"access_token":AUTH_TOKEN,"token_type":"Bearer","expires_in":86400})
     return JSONResponse({"error":"unsupported_grant_type"},status_code=400)
 
-_OPEN = {"/.well-known/oauth-authorization-server","/oauth/authorize","/oauth/token","/"}
+_OPEN = {"/.well-known/oauth-authorization-server","/oauth/authorize","/oauth/token","/","/sse"}
 
 class _Auth(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if request.url.path in _OPEN: return await call_next(request)
+        if request.url.path in _OPEN or request.url.path.startswith("/messages"): return await call_next(request)
         if request.headers.get("authorization","") == "Bearer " + AUTH_TOKEN: return await call_next(request)
         return JSONResponse({"error":"unauthorized"},status_code=401,headers={"WWW-Authenticate":"Bearer"})
 
+class _CombinedApp:
+    def __init__(self, http_app, sse_app):
+        self.http_app = http_app
+        self.sse_app = sse_app
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        if path == "/sse" or path.startswith("/messages"):
+            await self.sse_app(scope, receive, send)
+        else:
+            await self.http_app(scope, receive, send)
+
 if __name__ == "__main__":
     from starlette.middleware.cors import CORSMiddleware
-    app = mcp.streamable_http_app()
-    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-    uvicorn.run(_Auth(app), host="0.0.0.0", port=PORT)
+    http_app = mcp.streamable_http_app()
+    http_app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    sse_app = mcp.sse_app()
+    combined = _CombinedApp(http_app, sse_app)
+    uvicorn.run(_Auth(combined), host="0.0.0.0", port=PORT)
