@@ -117,6 +117,27 @@ CREATE TABLE IF NOT EXISTS nutrient_alerts (
     notes TEXT
 );
 
+CREATE TABLE IF NOT EXISTS training_plan (
+    id SERIAL PRIMARY KEY,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    days_per_week_min INTEGER NOT NULL DEFAULT 3,
+    days_per_week_max INTEGER NOT NULL DEFAULT 4,
+    split_type VARCHAR(50) DEFAULT 'PPL',
+    cardio_days INTEGER DEFAULT 1,
+    is_active BOOLEAN DEFAULT TRUE,
+    notes TEXT
+);
+
+INSERT INTO training_plan (days_per_week_min, days_per_week_max, split_type, cardio_days, notes)
+SELECT 3, 4, 'PPL', 1, 'PPL + dia D de cardio LISS. Academia semi-completa, sem crucifixo máquina.'
+WHERE NOT EXISTS (SELECT 1 FROM training_plan WHERE is_active = TRUE);
+
+ALTER TABLE workouts ADD COLUMN IF NOT EXISTS energy_level INTEGER;
+ALTER TABLE workouts ADD COLUMN IF NOT EXISTS sleep_quality INTEGER;
+ALTER TABLE workouts ADD COLUMN IF NOT EXISTS split_day VARCHAR(20);
+
+ALTER TABLE daily_summary ADD COLUMN IF NOT EXISTS water_estimate_ml INTEGER;
+
 -- Indices para performance
 CREATE INDEX IF NOT EXISTS idx_meals_meal_time ON meals(meal_time);
 CREATE INDEX IF NOT EXISTS idx_nutrient_alerts_nutrient ON nutrient_alerts(nutrient);

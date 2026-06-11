@@ -225,12 +225,13 @@ def resumo_micronutrientes(dias: int = 7) -> str:
         "SUM(na) as na_t, AVG(na) as na_a, SUM(vitc) as vitc_t, AVG(vitc) as vitc_a, "
         "SUM(vitd) as vitd_t, AVG(vitd) as vitd_a, "
         "SUM(vitb12) as vitb12_t, AVG(vitb12) as vitb12_a, "
-        "SUM(zn) as zn_t, AVG(zn) as zn_a FROM ("
+        "SUM(zn) as zn_t, AVG(zn) as zn_a, "
+        "SUM(fibra) as fibra_t, AVG(fibra) as fibra_a FROM ("
         "  SELECT COALESCE(SUM(calcium_mg),0) as ca, COALESCE(SUM(iron_mg),0) as fe, "
         "  COALESCE(SUM(magnesium_mg),0) as mg, COALESCE(SUM(potassium_mg),0) as k, "
         "  COALESCE(SUM(sodium_mg),0) as na, COALESCE(SUM(vitamin_c_mg),0) as vitc, "
         "  COALESCE(SUM(vitamin_d_mcg),0) as vitd, COALESCE(SUM(vitamin_b12_mcg),0) as vitb12, "
-        "  COALESCE(SUM(zinc_mg),0) as zn "
+        "  COALESCE(SUM(zinc_mg),0) as zn, COALESCE(SUM(fiber_g),0) as fibra "
         "  FROM meals "
         "  WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date BETWEEN %s AND %s "
         "  OR (meal_time IS NULL AND (logged_at AT TIME ZONE 'Europe/Lisbon')::date BETWEEN %s AND %s) "
@@ -242,6 +243,7 @@ def resumo_micronutrientes(dias: int = 7) -> str:
     m = METAS
     return "\n".join([
         f"Micronutrientes {inicio} a {fim} ({dias} dias)",
+        f"Fibra:    total {f(r['fibra_t']):.1f}g    | media {f(r['fibra_a']):.1f}g/dia    | meta {m['fibra']}g",
         f"Calcio:   total {f(r['ca_t']):.0f}mg  | media {f(r['ca_a']):.0f}mg/dia  | meta {m['ca']}mg",
         f"Ferro:    total {f(r['fe_t']):.1f}mg  | media {f(r['fe_a']):.1f}mg/dia  | meta {m['fe']}mg",
         f"Magnesio: total {f(r['mg_t']):.0f}mg  | media {f(r['mg_a']):.0f}mg/dia  | meta {m['mg']}mg",
@@ -345,6 +347,159 @@ def historico_treino(dias: int = 30) -> str:
     return "\n".join(linhas)
 
 @mcp.tool()
+def distribuicao_proteina(data: str = None) -> str:
+    """Distribuicao de proteina ao longo do dia. Calcula maior janela sem proteina (>5g)."""
+    d = data or _hoje()
+    rows = db_q(
+        "SELECT meal_time AT TIME ZONE 'Europe/Lisbon' as t, meal_type, protein_g "
+        "FROM meals "
+        "WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date = %s AND COALESCE(protein_g, 0) > 5 "
+        "ORDER BY meal_time", [d])
+    total_prot = db_q(
+        "SELECT COALESCE(SUM(protein_g), 0) as total FROM meals "
+        "WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date = %s", [d])[0]["total"]
+    anchor_start = datetime.fromisoformat(d + "T06:00:00").replace(tzinfo=LISBOA)
+    anchor_end = datetime.now(LISBOA) if d == _hoje() else datetime.fromisoformat(d + "T23:59:00").replace(tzinfo=LISBOA)
+    times = [r["t"] for r in rows if r["t"]]
+    if not times:
+        maior_janela = round((anchor_end - anchor_start).total_seconds() / 3600, 1)
+    else:
+        pontos = [anchor_start] + sorted(times) + [anchor_end]
+        maior_janela = round(max(max((pontos[i+1] - pontos[i]).total_seconds() / 3600, 0) for i in range(len(pontos)-1)), 1)
+    resultado = {
+        "data": d,
+        "total_proteina_g": round(float(total_prot), 1),
+        "meta_proteina_g": METAS["prot"],
+        "refeicoes": [{"horario": r["t"].strftime("%H:%M") if r["t"] else "--:--", "tipo": r["meal_type"], "proteina_g": round(float(r["protein_g"] or 0), 1)} for r in rows],
+        "maior_janela_sem_proteina_horas": maior_janela,
+        "refeicoes_com_30g_ou_mais": sum(1 for r in rows if float(r["protein_g"] or 0) >= 30),
+    }
+    return json.dumps(resultado, default=str, ensure_ascii=False, indent=2)
+
+@mcp.tool()
+def dias_suspeitos(dias: int = 7) -> str:
+    """Detecta dias com possivel subnotificacao nos ultimos N dias."""
+    fim = _hoje()
+    inicio = (datetime.now(LISBOA) - timedelta(days=dias - 1)).strftime("%Y-%m-%d")
+    rows = db_q(
+        "SELECT (meal_time AT TIME ZONE 'Europe/Lisbon')::date as data, "
+        "COUNT(*) as n, COALESCE(SUM(calories), 0) as kcal, "
+        "EXTRACT(EPOCH FROM (MAX(meal_time) - MIN(meal_time)))/3600 as janela_h "
+        "FROM meals WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date BETWEEN %s AND %s "
+        "GROUP BY 1 ORDER BY 1", [inicio, fim])
+    dias_com_dados = {str(r["data"]): r for r in rows}
+    all_days = [(datetime.now(LISBOA) - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(dias - 1, -1, -1)]
+    suspeitos = []
+    sem_registro = []
+    dias_ok = 0
+    for d in all_days:
+        if d not in dias_com_dados:
+            sem_registro.append(d)
+            continue
+        r = dias_com_dados[d]
+        flags = []
+        if float(r["kcal"]) < 1352: flags.append("kcal_baixa")
+        if int(r["n"]) < 3: flags.append("poucas_refeicoes")
+        if r["janela_h"] is not None and float(r["janela_h"]) < 6: flags.append("janela_curta")
+        if flags:
+            suspeitos.append({"data": d, "total_kcal": round(float(r["kcal"])), "num_refeicoes": int(r["n"]), "flags": flags})
+        else:
+            dias_ok += 1
+    resultado = {
+        "periodo": f"{inicio} a {fim}",
+        "dias_suspeitos": suspeitos,
+        "dias_ok": dias_ok,
+        "dias_sem_registro": sem_registro,
+    }
+    return json.dumps(resultado, default=str, ensure_ascii=False, indent=2)
+
+@mcp.tool()
+def comparativo_semana_fds(semanas: int = 2) -> str:
+    """Compara medias de macros entre dias uteis (seg-sex) e fim de semana (sab-dom)."""
+    fim = _hoje()
+    inicio = (datetime.now(LISBOA) - timedelta(days=semanas * 7 - 1)).strftime("%Y-%m-%d")
+    rows = db_q(
+        "SELECT tipo_dia, COUNT(*) as dias, "
+        "AVG(kcal) as media_kcal, AVG(prot) as media_prot, "
+        "AVG(carbs) as media_carbs, AVG(fat) as media_fat, AVG(na) as media_sodio "
+        "FROM ("
+        "  SELECT CASE WHEN EXTRACT(DOW FROM (meal_time AT TIME ZONE 'Europe/Lisbon')::date) IN (0,6) "
+        "         THEN 'fds' ELSE 'util' END as tipo_dia, "
+        "  (meal_time AT TIME ZONE 'Europe/Lisbon')::date as data, "
+        "  COALESCE(SUM(calories),0) as kcal, COALESCE(SUM(protein_g),0) as prot, "
+        "  COALESCE(SUM(carbs_g),0) as carbs, COALESCE(SUM(fat_g),0) as fat, "
+        "  COALESCE(SUM(sodium_mg),0) as na "
+        "  FROM meals WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date BETWEEN %s AND %s "
+        "  GROUP BY tipo_dia, data"
+        ") t GROUP BY tipo_dia", [inicio, fim])
+    grupos = {r["tipo_dia"]: r for r in rows}
+    def grp(g):
+        if g not in grupos: return None
+        r = grupos[g]
+        return {"media_kcal": round(float(r["media_kcal"] or 0)), "media_proteina_g": round(float(r["media_prot"] or 0), 1), "media_carbs_g": round(float(r["media_carbs"] or 0), 1), "media_gordura_g": round(float(r["media_fat"] or 0), 1), "media_sodio_mg": round(float(r["media_sodio"] or 0)), "dias_com_registro": int(r["dias"])}
+    u = grp("util")
+    f = grp("fds")
+    gap = round((float(grupos["fds"]["media_kcal"] or 0) - float(grupos["util"]["media_kcal"] or 0)) / max(float(grupos["util"]["media_kcal"] or 1), 1) * 100, 1) if "util" in grupos and "fds" in grupos else None
+    resultado = {"periodo_semanas": semanas, "dias_uteis": u, "fim_de_semana": f, "gap_percentual_kcal": gap}
+    return json.dumps(resultado, default=str, ensure_ascii=False, indent=2)
+
+@mcp.tool()
+def aderencia_treino(semanas: int = 2) -> str:
+    """Compara treinos realizados vs planejados. Usa split_day para detectar grupos negligenciados."""
+    plano = db_q("SELECT days_per_week_min, days_per_week_max, split_type, cardio_days FROM training_plan WHERE is_active=TRUE ORDER BY id DESC LIMIT 1")
+    if not plano:
+        return "Nenhum plano de treino ativo. Crie um na tabela training_plan."
+    p = plano[0]
+    split_grupos = {"PPL": {"push", "pull", "legs"}, "upper_lower": {"upper", "lower"}, "fullbody": {"fullbody"}}.get(p["split_type"], set())
+    resultado_semanas = []
+    for i in range(semanas - 1, -1, -1):
+        seg = (datetime.now(LISBOA) - timedelta(days=datetime.now(LISBOA).weekday() + 7 * i)).date()
+        dom = seg + timedelta(days=6)
+        seg_s, dom_s = str(seg), str(dom)
+        realizados = db_q("SELECT split_day FROM workouts WHERE workout_date BETWEEN %s AND %s AND NOT COALESCE(skipped, false)", [seg_s, dom_s])
+        pulados = db_q("SELECT COUNT(*) as n FROM workouts WHERE workout_date BETWEEN %s AND %s AND COALESCE(skipped, false)", [seg_s, dom_s])[0]["n"]
+        grupos_treinados = list({r["split_day"] for r in realizados if r["split_day"]})
+        grupos_neg = sorted(split_grupos - set(grupos_treinados)) if split_grupos else []
+        n_real = len(realizados)
+        ader = min(round(n_real / max(p["days_per_week_min"], 1) * 100, 1), 100.0)
+        resultado_semanas.append({"semana": f"{seg_s} a {dom_s}", "treinos_realizados": n_real, "treinos_pulados": int(pulados), "aderencia_pct": ader, "grupos_treinados": grupos_treinados, "grupos_negligenciados": grupos_neg})
+    resultado = {"plano": {"min_por_semana": p["days_per_week_min"], "max_por_semana": p["days_per_week_max"], "split": p["split_type"]}, "semanas": resultado_semanas}
+    return json.dumps(resultado, default=str, ensure_ascii=False, indent=2)
+
+@mcp.tool()
+def contexto_peso(data: str = None) -> str:
+    """Contexto para interpretar uma medicao de peso: sodio/carbs recentes e medias moveis."""
+    d = data or _hoje()
+    atual = db_q("SELECT weight_kg, measurement_date FROM body_metrics WHERE measurement_date <= %s AND weight_kg IS NOT NULL ORDER BY measurement_date DESC LIMIT 1", [d])
+    if not atual:
+        return json.dumps({"data_pesagem": d, "peso_registrado_kg": None, "mensagem": "Nenhum peso registrado ate esta data."}, ensure_ascii=False)
+    peso_data = str(atual[0]["measurement_date"])
+    anterior = db_q("SELECT weight_kg, measurement_date FROM body_metrics WHERE measurement_date < %s AND weight_kg IS NOT NULL ORDER BY measurement_date DESC LIMIT 1", [peso_data])
+    d3_ini = (datetime.fromisoformat(d + "T00:00:00").replace(tzinfo=LISBOA) - timedelta(days=3)).strftime("%Y-%m-%d")
+    d3_fim = (datetime.fromisoformat(d + "T00:00:00").replace(tzinfo=LISBOA) - timedelta(days=1)).strftime("%Y-%m-%d")
+    ctx = db_q("SELECT AVG(sodium_mg) as na, AVG(carbs_g) as carbs, AVG(calories) as kcal FROM meals WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date BETWEEN %s AND %s", [d3_ini, d3_fim])[0]
+    d7_ini = (datetime.fromisoformat(d + "T00:00:00").replace(tzinfo=LISBOA) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d14_ini = (datetime.fromisoformat(d + "T00:00:00").replace(tzinfo=LISBOA) - timedelta(days=13)).strftime("%Y-%m-%d")
+    p7 = db_q("SELECT weight_kg FROM body_metrics WHERE measurement_date BETWEEN %s AND %s AND weight_kg IS NOT NULL", [d7_ini, d])
+    p14 = db_q("SELECT weight_kg FROM body_metrics WHERE measurement_date BETWEEN %s AND %s AND weight_kg IS NOT NULL", [d14_ini, d])
+    mm7 = round(sum(float(x["weight_kg"]) for x in p7) / len(p7), 2) if len(p7) >= 2 else None
+    mm14 = round(sum(float(x["weight_kg"]) for x in p14) / len(p14), 2) if len(p14) >= 3 else None
+    na_avg = float(ctx["na"] or 0)
+    resultado = {
+        "data_pesagem": d, "peso_registrado_kg": float(atual[0]["weight_kg"]),
+        "peso_anterior": {"data": str(anterior[0]["measurement_date"]), "peso_kg": float(anterior[0]["weight_kg"])} if anterior else None,
+        "contexto_3_dias_anteriores": {
+            "media_sodio_mg": round(na_avg), "meta_sodio_mg": METAS["na"],
+            "sodio_acima_meta": na_avg > METAS["na"],
+            "media_carbs_g": round(float(ctx["carbs"] or 0), 1),
+            "media_kcal": round(float(ctx["kcal"] or 0)),
+        },
+        "media_movel_7d_kg": mm7,
+        "media_movel_14d_kg": mm14,
+    }
+    return json.dumps(resultado, default=str, ensure_ascii=False, indent=2)
+
+@mcp.tool()
 def resumo_nutricional(data: str = None) -> str:
     """Totais do dia vs metas do plano da Helena."""
     d = data or _hoje()
@@ -372,10 +527,10 @@ def registrar_metricas_corporais(peso_kg: float = None, cintura_cm: float = None
     return f"Metricas (ID {rid}) em {d}: {' | '.join(parts)}"
 
 @mcp.tool()
-def registrar_treino(exercicios: list, data: str = None, tipo: str = None, local: str = None, notas: str = None, pulado: bool = False, motivo_pulo: str = None) -> str:
-    """Registra sessao de treino. exercicios: [{nome, series:[{reps,carga_kg,rpe,notas}], grupo_muscular?, equipamento?, alternativa_de?}]"""
+def registrar_treino(exercicios: list, data: str = None, tipo: str = None, local: str = None, notas: str = None, pulado: bool = False, motivo_pulo: str = None, energia: int = None, qualidade_sono: int = None, split_day: str = None) -> str:
+    """Registra sessao de treino. exercicios: [{nome, series:[{reps,carga_kg,rpe,notas}], grupo_muscular?, equipamento?, alternativa_de?}]. split_day: 'push'|'pull'|'legs'|'cardio'"""
     d = data or _hoje()
-    wid = db_e("INSERT INTO workouts (workout_date,workout_type,location,notes,skipped,skip_reason) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",[d,tipo,local,notas,pulado,motivo_pulo])
+    wid = db_e("INSERT INTO workouts (workout_date,workout_type,location,notes,skipped,skip_reason,energy_level,sleep_quality,split_day) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",[d,tipo,local,notas,pulado,motivo_pulo,energia,qualidade_sono,split_day])
     if pulado: return f"Treino pulado (ID {wid}). Motivo: {motivo_pulo or 'nao informado'}"
     sets = 0
     for ex in exercicios:
@@ -414,15 +569,17 @@ def progressao_exercicio(nome_exercicio: str) -> str:
     return "\n".join(linhas)
 
 @mcp.tool()
-def gerar_resumo_diario(data: str = None, treinou: bool = None, notas_treino: str = None) -> str:
-    """Gera e salva o daily_summary."""
+def gerar_resumo_diario(data: str = None, treinou: bool = None, notas_treino: str = None, agua_ml: int = None) -> str:
+    """Gera e salva o daily_summary. agua_ml: estimativa informal de hidratacao (opcional)."""
     d = data or _hoje()
     r = db_q("SELECT COALESCE(SUM(calories),0) as cal,COALESCE(SUM(protein_g),0) as prot,COALESCE(SUM(carbs_g),0) as carbs,COALESCE(SUM(fat_g),0) as fat,COALESCE(SUM(fiber_g),0) as fiber,COALESCE(SUM(calcium_mg),0) as ca,COALESCE(SUM(iron_mg),0) as fe,COALESCE(SUM(magnesium_mg),0) as mg_,COALESCE(SUM(potassium_mg),0) as k,COALESCE(SUM(vitamin_c_mg),0) as vitc,COALESCE(SUM(vitamin_d_mcg),0) as vitd,COALESCE(SUM(vitamin_b12_mcg),0) as vitb12,COALESCE(SUM(zinc_mg),0) as zn,COUNT(*) as total,COUNT(*) FILTER (WHERE is_on_plan) as on_plan FROM meals WHERE (meal_time AT TIME ZONE 'Europe/Lisbon')::date=%s OR (meal_time IS NULL AND (logged_at AT TIME ZONE 'Europe/Lisbon')::date=%s)",[d,d])[0]
     adh = int(float(r["on_plan"])/max(float(r["total"]),1)*100)
-    db_e("INSERT INTO daily_summary (summary_date,total_calories,total_protein_g,total_carbs_g,total_fat_g,total_fiber_g,calcium_mg,iron_mg,magnesium_mg,potassium_mg,vitamin_c_mg,vitamin_d_mcg,vitamin_b12_mcg,zinc_mg,meals_on_plan,meals_total,adherence_pct,trained,workout_notes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (summary_date) DO UPDATE SET total_calories=EXCLUDED.total_calories,total_protein_g=EXCLUDED.total_protein_g,adherence_pct=EXCLUDED.adherence_pct,trained=EXCLUDED.trained",
-        [d,r["cal"],r["prot"],r["carbs"],r["fat"],r["fiber"],r["ca"],r["fe"],r["mg_"],r["k"],r["vitc"],r["vitd"],r["vitb12"],r["zn"],r["on_plan"],r["total"],adh,treinou,notas_treino])
+    db_e("INSERT INTO daily_summary (summary_date,total_calories,total_protein_g,total_carbs_g,total_fat_g,total_fiber_g,calcium_mg,iron_mg,magnesium_mg,potassium_mg,vitamin_c_mg,vitamin_d_mcg,vitamin_b12_mcg,zinc_mg,meals_on_plan,meals_total,adherence_pct,trained,workout_notes,water_estimate_ml) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (summary_date) DO UPDATE SET total_calories=EXCLUDED.total_calories,total_protein_g=EXCLUDED.total_protein_g,adherence_pct=EXCLUDED.adherence_pct,trained=EXCLUDED.trained,water_estimate_ml=EXCLUDED.water_estimate_ml",
+        [d,r["cal"],r["prot"],r["carbs"],r["fat"],r["fiber"],r["ca"],r["fe"],r["mg_"],r["k"],r["vitc"],r["vitd"],r["vitb12"],r["zn"],r["on_plan"],r["total"],adh,treinou,notas_treino,agua_ml])
     m = METAS
-    return "\n".join([f"Resumo {d}",f"Calorias: {float(r['cal']):.0f}/{m['cal']} ({float(r['cal'])/m['cal']*100:.0f}%)",f"Proteina: {float(r['prot']):.1f}/{m['prot']}g",f"Aderencia: {adh}% ({r['on_plan']}/{r['total']})",f"Treino: {'Sim' if treinou else ('Nao' if treinou is False else '-')}"])
+    linhas = [f"Resumo {d}",f"Calorias: {float(r['cal']):.0f}/{m['cal']} ({float(r['cal'])/m['cal']*100:.0f}%)",f"Proteina: {float(r['prot']):.1f}/{m['prot']}g",f"Aderencia: {adh}% ({r['on_plan']}/{r['total']})",f"Treino: {'Sim' if treinou else ('Nao' if treinou is False else '-')}"]
+    if agua_ml: linhas.append(f"Agua: {agua_ml}ml registrado.")
+    return "\n".join(linhas)
 
 @mcp.tool()
 def retrospectiva_semanal(data_domingo: str = None) -> str:
