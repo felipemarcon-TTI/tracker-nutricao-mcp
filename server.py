@@ -22,9 +22,9 @@ CLIENT_SECRET = os.environ.get("MCP_OAUTH_CLIENT_SECRET", "tracker-nutricao")
 mcp = FastMCP("Tracker Nutricao e Treino")
 
 METAS = {
-    "cal": 2253, "prot": 183.3, "carbs": 231.9, "fat": 70.7, "fibra": 17.7,
-    "ca": 1145.1, "mg": 218.5, "fe": 7.3, "k": 3199.0, "na": 885.7,
-    "vit_c": 39.9, "vit_d": 1.9, "vit_b12": 1.8, "zn": 6.6,
+    "cal": 1721, "prot": 170.9, "carbs": 146.4, "fat": 53.4, "fibra": 32.6,
+    "ca": 1000, "mg": 420, "fe": 8, "k": 3400, "na": 885.7,
+    "vit_c": 90, "vit_d": 15.0, "vit_b12": 2.4, "zn": 11,
 }
 
 # Semanas consecutivas abaixo da meta para atingir red_flag (sodio: acima da meta)
@@ -84,6 +84,25 @@ def inicializar_banco() -> str:
             try: db_e(stmt + ";")
             except Exception as ex:
                 if "already exists" not in str(ex).lower() and "duplicate" not in str(ex).lower(): raise
+    # Migration v2 -- body_metrics expansion (idempotente)
+    _cols = [
+        "height_cm NUMERIC(5,2)","bmi NUMERIC(5,2)","body_fat_pct NUMERIC(5,2)",
+        "fat_mass_kg NUMERIC(5,2)","fat_free_mass_kg NUMERIC(5,2)","residual_mass_kg NUMERIC(5,2)",
+        "body_density NUMERIC(7,4)","sum_skinfolds_mm NUMERIC(6,2)",
+        "waist_hip_ratio NUMERIC(5,3)","arm_muscle_circ_cm NUMERIC(5,2)",
+        "skinfold_triceps_mm NUMERIC(5,2)","skinfold_biceps_mm NUMERIC(5,2)",
+        "skinfold_abdominal_mm NUMERIC(5,2)","skinfold_subscapular_mm NUMERIC(5,2)",
+        "skinfold_midaxillary_mm NUMERIC(5,2)","skinfold_thigh_mm NUMERIC(5,2)",
+        "skinfold_chest_mm NUMERIC(5,2)","skinfold_suprailiac_mm NUMERIC(5,2)",
+        "circ_waist_cm NUMERIC(5,2)","circ_hip_cm NUMERIC(5,2)",
+        "circ_abdomen_cm NUMERIC(5,2)","circ_arm_relaxed_cm NUMERIC(5,2)",
+        "circ_thigh_medial_cm NUMERIC(5,2)",
+        "bmi_class VARCHAR(50)","metabolic_risk VARCHAR(50)",
+        "body_fat_class VARCHAR(50)","amc_class VARCHAR(50)",
+    ]
+    for _col in _cols:
+        try: db_e(f"ALTER TABLE body_metrics ADD COLUMN IF NOT EXISTS {_col};")
+        except Exception: pass
     r = db_q("SELECT COUNT(*) as n FROM exercises")
     t = db_q("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
     return "Banco inicializado!\nTabelas: " + ", ".join(x["table_name"] for x in t) + "\nExercicios: " + str(r[0]["n"])
@@ -519,12 +538,54 @@ def resumo_nutricional(data: str = None) -> str:
         f"Refeicoes: {r['total']} ({r['on_plan']} no plano)"])
 
 @mcp.tool()
-def registrar_metricas_corporais(peso_kg: float = None, cintura_cm: float = None, data: str = None, notas: str = None) -> str:
-    """Registra peso (kg) e/ou cintura (cm)."""
+def registrar_metricas_corporais(
+    peso_kg: float = None, cintura_cm: float = None, data: str = None, notas: str = None,
+    height_cm: float = None, bmi: float = None,
+    body_fat_pct: float = None, fat_mass_kg: float = None,
+    fat_free_mass_kg: float = None, residual_mass_kg: float = None,
+    body_density: float = None, sum_skinfolds_mm: float = None,
+    waist_hip_ratio: float = None, arm_muscle_circ_cm: float = None,
+    skinfold_triceps_mm: float = None, skinfold_biceps_mm: float = None,
+    skinfold_abdominal_mm: float = None, skinfold_subscapular_mm: float = None,
+    skinfold_midaxillary_mm: float = None, skinfold_thigh_mm: float = None,
+    skinfold_chest_mm: float = None, skinfold_suprailiac_mm: float = None,
+    circ_waist_cm: float = None, circ_hip_cm: float = None,
+    circ_abdomen_cm: float = None, circ_arm_relaxed_cm: float = None,
+    circ_thigh_medial_cm: float = None,
+    bmi_class: str = None, metabolic_risk: str = None,
+    body_fat_class: str = None, amc_class: str = None,
+) -> str:
+    """Registra peso/cintura (update caseiro) ou composicao corporal completa (bioimpedancia).
+    Campos opcionais. circ_waist_cm e espelhado em waist_cm para manter a serie continua."""
     d = data or _hoje()
-    rid = db_e("INSERT INTO body_metrics (measurement_date,weight_kg,waist_cm,notes) VALUES (%s,%s,%s,%s) RETURNING id",[d,peso_kg,cintura_cm,notas])
-    parts = [x for x in [f"Peso:{peso_kg}kg" if peso_kg else None, f"Cintura:{cintura_cm}cm" if cintura_cm else None] if x]
-    return f"Metricas (ID {rid}) em {d}: {' | '.join(parts)}"
+    campos = {
+        "measurement_date": d,
+        "weight_kg": peso_kg, "waist_cm": cintura_cm, "notes": notas,
+        "height_cm": height_cm, "bmi": bmi,
+        "body_fat_pct": body_fat_pct, "fat_mass_kg": fat_mass_kg,
+        "fat_free_mass_kg": fat_free_mass_kg, "residual_mass_kg": residual_mass_kg,
+        "body_density": body_density, "sum_skinfolds_mm": sum_skinfolds_mm,
+        "waist_hip_ratio": waist_hip_ratio, "arm_muscle_circ_cm": arm_muscle_circ_cm,
+        "skinfold_triceps_mm": skinfold_triceps_mm, "skinfold_biceps_mm": skinfold_biceps_mm,
+        "skinfold_abdominal_mm": skinfold_abdominal_mm, "skinfold_subscapular_mm": skinfold_subscapular_mm,
+        "skinfold_midaxillary_mm": skinfold_midaxillary_mm, "skinfold_thigh_mm": skinfold_thigh_mm,
+        "skinfold_chest_mm": skinfold_chest_mm, "skinfold_suprailiac_mm": skinfold_suprailiac_mm,
+        "circ_waist_cm": circ_waist_cm, "circ_hip_cm": circ_hip_cm,
+        "circ_abdomen_cm": circ_abdomen_cm, "circ_arm_relaxed_cm": circ_arm_relaxed_cm,
+        "circ_thigh_medial_cm": circ_thigh_medial_cm,
+        "bmi_class": bmi_class, "metabolic_risk": metabolic_risk,
+        "body_fat_class": body_fat_class, "amc_class": amc_class,
+    }
+    if circ_waist_cm is not None and cintura_cm is None:
+        campos["waist_cm"] = circ_waist_cm
+    campos = {k: v for k, v in campos.items() if v is not None}
+    cols = ", ".join(campos.keys())
+    vals = ", ".join(["%s"] * len(campos))
+    rid = db_e(f"INSERT INTO body_metrics ({cols}) VALUES ({vals}) RETURNING id", list(campos.values()))
+    waist_display = campos.get("waist_cm")
+    parts = [x for x in [f"Peso:{peso_kg}kg" if peso_kg else None, f"Cintura:{waist_display}cm" if waist_display else None] if x]
+    extra = len(campos) - 1 - len(parts)
+    return f"Metricas (ID {rid}) em {d}: {' | '.join(parts) or 'sem peso/cintura'}" + (f" + {extra} campos adicionais" if extra > 0 else "")
 
 @mcp.tool()
 def registrar_treino(exercicios: list, data: str = None, tipo: str = None, local: str = None, notas: str = None, pulado: bool = False, motivo_pulo: str = None, energia: int = None, qualidade_sono: int = None, split_day: str = None) -> str:
@@ -708,3 +769,4 @@ if __name__ == "__main__":
     sse_app = mcp.sse_app()
     combined = _CombinedApp(http_app, sse_app)
     uvicorn.run(_Auth(combined), host="0.0.0.0", port=PORT)
+
