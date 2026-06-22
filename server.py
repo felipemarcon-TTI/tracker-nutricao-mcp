@@ -61,11 +61,13 @@ def db_e(sql, params=None):
     try:
         with c.cursor() as cur:
             cur.execute(sql, params or [])
-            c.commit()
+            rc = cur.rowcount  # capturar antes do commit (commit invalida o rowcount -> -1)
             try:
-                return cur.fetchone()[0]
+                val = cur.fetchone()[0]  # statements com RETURNING
             except Exception:
-                return cur.rowcount
+                val = rc
+            c.commit()
+            return val
     except Exception:
         c.rollback()
         raise
