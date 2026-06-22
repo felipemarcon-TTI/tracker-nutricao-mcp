@@ -103,6 +103,10 @@ def inicializar_banco() -> str:
     for _col in _cols:
         try: db_e(f"ALTER TABLE body_metrics ADD COLUMN IF NOT EXISTS {_col};")
         except Exception: pass
+    # Migration v3 -- estado de coccao / base do peso da porcao (metadado de auditoria, idempotente)
+    for _col in ["cooking_state VARCHAR(20)", "portion_weight_g NUMERIC(7,2)", "portion_basis VARCHAR(20)"]:
+        try: db_e(f"ALTER TABLE meals ADD COLUMN IF NOT EXISTS {_col};")
+        except Exception: pass
     r = db_q("SELECT COUNT(*) as n FROM exercises")
     t = db_q("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
     return "Banco inicializado!\nTabelas: " + ", ".join(x["table_name"] for x in t) + "\nExercicios: " + str(r[0]["n"])
@@ -127,26 +131,46 @@ def registrar_refeicao(
     potassio_mg: float = None, sodio_mg: float = None,
     vitamina_c_mg: float = None, vitamina_d_mcg: float = None,
     vitamina_b12_mcg: float = None, zinco_mg: float = None,
+    estado_coccao: str = None, peso_porcao_g: float = None, base_peso: str = None,
 ) -> str:
-    """Registra refeicao. Macros/micros opcionais — enviar valores calculados pelo Claude. tipo: cafe_manha|almoco|lanche|jantar|ceia|pre_treino|outro"""
+    """Registra refeicao. Macros/micros opcionais — enviar valores calculados pelo Claude. tipo: cafe_manha|almoco|lanche|jantar|ceia|pre_treino|outro
+
+    ESTADO DE COCCAO (metadado de auditoria — o servidor so armazena, NAO converte):
+      estado_coccao: 'cru' | 'cozido' | 'congelado_glaze' | 'assado' | None(desconhecido)
+      peso_porcao_g: peso relatado pelo usuario (g)
+      base_peso:     'peso_cru' | 'peso_cozido' | 'peso_congelado'
+
+    REGRA DE CALCULO (vale para o cliente/Claude ao calcular os macros, ANTES de enviar):
+      - Proteina (carne/frango/peixe/camarao) PERDE agua ao cozinhar: 100g cru -> ~70-80g cozido,
+        proteina/100g sobe no cozido. Peso CRU -> tabela cru; peso COZIDO -> tabela cozido.
+      - Amido (arroz/macarrao/batata/leguminosas) ABSORVE agua: 100g cru -> ~250-300g cozido
+        (batata incha menos), carbo/100g cai no cozido. Peso CRU -> tabela cru; COZIDO -> tabela cozido.
+      - Congelado com glaze (camarao/peixe): descontar ~10-20% de gelo antes de calcular.
+      - Se o usuario nao especificar cru/cozido: perguntar ou assumir o padrao mais provavel do
+        alimento e REGISTRAR a suposicao em estado_coccao/base_peso."""
     mt = None
     if horario:
         mt = horario if ("T" in horario or "-" in horario) else _hoje() + "T" + horario + ":00"
     rid = db_e(
         "INSERT INTO meals (meal_time,meal_type,description,is_on_plan,notes,"
         "calories,protein_g,carbs_g,fat_g,fiber_g,calcium_mg,iron_mg,magnesium_mg,"
-        "potassium_mg,sodium_mg,vitamin_c_mg,vitamin_d_mcg,vitamin_b12_mcg,zinc_mg) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+        "potassium_mg,sodium_mg,vitamin_c_mg,vitamin_d_mcg,vitamin_b12_mcg,zinc_mg,"
+        "cooking_state,portion_weight_g,portion_basis) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
         [mt, tipo, descricao, seguiu_plano, notas,
          calorias, proteina_g, carbs_g, gordura_g, fibra_g,
          calcio_mg, ferro_mg, magnesio_mg, potassio_mg, sodio_mg,
-         vitamina_c_mg, vitamina_d_mcg, vitamina_b12_mcg, zinco_mg]
+         vitamina_c_mg, vitamina_d_mcg, vitamina_b12_mcg, zinco_mg,
+         estado_coccao, peso_porcao_g, base_peso]
     )
     partes = [f"Refeicao registrada (ID {rid})"]
     if calorias is not None:
         partes.append(f"{calorias:.0f} kcal | Prot:{proteina_g or 0:.1f}g | Carbs:{carbs_g or 0:.1f}g | Gord:{gordura_g or 0:.1f}g")
     else:
         partes.append("Macros nao informados.")
+    if estado_coccao or base_peso or peso_porcao_g is not None:
+        peso = f"{peso_porcao_g:.0f}g " if peso_porcao_g is not None else ""
+        partes.append(f"Coccao: {peso}[{estado_coccao or '?'} / {base_peso or '?'}]")
     return "\n".join(partes)
 
 @mcp.tool()
@@ -160,8 +184,12 @@ def atualizar_refeicao(
     potassio_mg: float = None, sodio_mg: float = None,
     vitamina_c_mg: float = None, vitamina_d_mcg: float = None,
     vitamina_b12_mcg: float = None, zinco_mg: float = None,
+    estado_coccao: str = None, peso_porcao_g: float = None, base_peso: str = None,
 ) -> str:
-    """Atualiza campos de uma refeicao existente por ID. Apenas campos informados sao alterados."""
+    """Atualiza campos de uma refeicao existente por ID. Apenas campos informados sao alterados.
+    Via confiavel para corrigir uma refeicao (ex: proteina 42g -> 34g): faz UPDATE com commit
+    e reflete em resumo_diario/gerar_resumo_diario. Para SQL ad-hoc use executar_sql (writes commitam).
+    estado_coccao/base_peso/peso_porcao_g: metadado de coccao (ver registrar_refeicao)."""
     campos = {
         "description": descricao, "meal_type": tipo, "is_on_plan": seguiu_plano, "notes": notas,
         "calories": calorias, "protein_g": proteina_g, "carbs_g": carbs_g, "fat_g": gordura_g,
@@ -169,6 +197,7 @@ def atualizar_refeicao(
         "magnesium_mg": magnesio_mg, "potassium_mg": potassio_mg, "sodium_mg": sodio_mg,
         "vitamin_c_mg": vitamina_c_mg, "vitamin_d_mcg": vitamina_d_mcg,
         "vitamin_b12_mcg": vitamina_b12_mcg, "zinc_mg": zinco_mg,
+        "cooking_state": estado_coccao, "portion_weight_g": peso_porcao_g, "portion_basis": base_peso,
     }
     if horario:
         campos["meal_time"] = horario if ("T" in horario or "-" in horario) else _hoje() + "T" + horario + ":00"
@@ -186,7 +215,8 @@ def listar_refeicoes(data: str = None, data_inicio: str = None, data_fim: str = 
         "SELECT id, meal_time AT TIME ZONE 'Europe/Lisbon' as t, meal_type, description, "
         "is_on_plan, calories, protein_g, carbs_g, fat_g, fiber_g, "
         "calcium_mg, iron_mg, magnesium_mg, potassium_mg, sodium_mg, "
-        "vitamin_c_mg, vitamin_d_mcg, vitamin_b12_mcg, zinc_mg, notes "
+        "vitamin_c_mg, vitamin_d_mcg, vitamin_b12_mcg, zinc_mg, notes, "
+        "cooking_state, portion_weight_g, portion_basis "
         "FROM meals "
     )
     if data:
@@ -207,7 +237,11 @@ def listar_refeicoes(data: str = None, data_inicio: str = None, data_fim: str = 
         carbs = f"{float(r['carbs_g']):.1f}g" if r["carbs_g"] else "?"
         fat = f"{float(r['fat_g']):.1f}g" if r["fat_g"] else "?"
         linhas.append(f"ID:{r['id']} {h} [{r['meal_type'] or '-'}] {r['description']}")
-        linhas.append(f"  {kcal} | P:{prot} | C:{carbs} | G:{fat}")
+        linha_macros = f"  {kcal} | P:{prot} | C:{carbs} | G:{fat}"
+        if r.get("cooking_state") or r.get("portion_basis") or r.get("portion_weight_g") is not None:
+            peso = f"{float(r['portion_weight_g']):.0f}g " if r.get("portion_weight_g") is not None else ""
+            linha_macros += f" | coccao: {peso}[{r.get('cooking_state') or '?'}/{r.get('portion_basis') or '?'}]"
+        linhas.append(linha_macros)
     return "\n".join(linhas)
 
 @mcp.tool()
@@ -669,13 +703,24 @@ def inserir_dados_historicos() -> str:
 
 @mcp.tool()
 def executar_sql(sql: str) -> str:
-    """Executa SQL ad-hoc no banco."""
+    """Executa SQL ad-hoc no banco. Reads (SELECT/WITH/SHOW/EXPLAIN/TABLE/VALUES) usam db_q;
+    qualquer outra coisa (UPDATE/INSERT/DELETE/DDL) vai por db_e, que COMMITA — evita o bug
+    em que edicoes via SQL direto pareciam reverter (db_q nunca commitava e fechava em rollback)."""
+    primeiro = ""
+    for tok in sql.strip().lstrip("(").strip().split():
+        primeiro = tok.lower().strip("(")
+        break
+    if primeiro in ("select", "with", "show", "explain", "table", "values"):
+        try:
+            rows = db_q(sql)
+            return json.dumps(rows, default=str, indent=2) if rows else "0 linhas."
+        except Exception as ex:
+            return f"Erro: {ex}"
     try:
-        rows = db_q(sql)
-        return json.dumps(rows, default=str, indent=2) if rows else "0 linhas."
-    except Exception:
-        try: return f"{db_e(sql)} linha(s) afetadas."
-        except Exception as ex: return f"Erro: {ex}"
+        res = db_e(sql)
+        return f"OK. {res} linha(s) afetadas (commit confirmado)."
+    except Exception as ex:
+        return f"Erro: {ex}"
 
 _auth_codes: dict = {}
 

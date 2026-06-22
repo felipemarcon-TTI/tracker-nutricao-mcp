@@ -23,7 +23,10 @@ CREATE TABLE IF NOT EXISTS meals (
     vitamin_d_mcg NUMERIC(7,2),
     vitamin_b12_mcg NUMERIC(7,2),
     zinc_mg NUMERIC(7,2),
-    notes TEXT
+    notes TEXT,
+    cooking_state VARCHAR(20),
+    portion_weight_g NUMERIC(7,2),
+    portion_basis VARCHAR(20)
 );
 
 CREATE TABLE IF NOT EXISTS daily_summary (
@@ -137,6 +140,12 @@ ALTER TABLE workouts ADD COLUMN IF NOT EXISTS sleep_quality INTEGER;
 ALTER TABLE workouts ADD COLUMN IF NOT EXISTS split_day VARCHAR(20);
 
 ALTER TABLE daily_summary ADD COLUMN IF NOT EXISTS water_estimate_ml INTEGER;
+
+-- Migration v3 -- estado de coccao e base do peso da porcao (metadado/auditoria)
+-- O calculo de macros segue feito pelo cliente (Claude); aqui so registramos o estado.
+ALTER TABLE meals ADD COLUMN IF NOT EXISTS cooking_state VARCHAR(20);
+ALTER TABLE meals ADD COLUMN IF NOT EXISTS portion_weight_g NUMERIC(7,2);
+ALTER TABLE meals ADD COLUMN IF NOT EXISTS portion_basis VARCHAR(20);
 
 -- Indices para performance
 CREATE INDEX IF NOT EXISTS idx_meals_meal_time ON meals(meal_time);

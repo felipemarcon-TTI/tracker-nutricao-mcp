@@ -44,8 +44,9 @@ Apos o deploy, copie a URL do servico no Railway (ex: `https://tracker-nutricao-
 |---|---|
 | `inicializar_banco` | Cria tabelas e popula exercicios (setup inicial) |
 | `verificar_lembretes` | Verifica lembretes pendentes |
-| `registrar_refeicao` | Registra refeicao com estimativa de macros/micros |
-| `listar_refeicoes` | Lista refeicoes de um dia |
+| `registrar_refeicao` | Registra refeicao com macros/micros + estado de coccao (opcional) |
+| `atualizar_refeicao` | Corrige campos de uma refeicao por ID (UPDATE com commit) |
+| `listar_refeicoes` | Lista refeicoes de um dia (mostra estado de coccao quando informado) |
 | `resumo_nutricional` | Totais do dia vs metas da nutricionista |
 | `registrar_metricas_corporais` | Registra peso e cintura |
 | `registrar_treino` | Registra sessao de treino completa |
@@ -68,6 +69,31 @@ Apos o deploy, copie a URL do servico no Railway (ex: `https://tracker-nutricao-
 
 Micronutrientes: Calcio 1145mg, Magnesio 218mg, Ferro 7.3mg, Potassio 3199mg,
 Vitamina C 39.9mg, Vitamina D 1.9mcg, Vitamina B12 1.8mcg, Zinco 6.6mg.
+
+## Estado de cocção e perda/ganho de água (auditoria)
+
+O peso de um alimento muda conforme o preparo, e isso afeta os macros. O **cálculo
+continua sendo feito pelo cliente (Claude)** — o servidor só **armazena** o estado
+informado, como metadado de auditoria. Campos opcionais em `registrar_refeicao` /
+`atualizar_refeicao` (e persistidos na tabela `meals`):
+
+- `estado_coccao` → `cooking_state`: `cru` | `cozido` | `congelado_glaze` | `assado` | `null`
+- `peso_porcao_g` → `portion_weight_g`: peso relatado pelo usuário (g)
+- `base_peso` → `portion_basis`: `peso_cru` | `peso_cozido` | `peso_congelado`
+
+### Regra de cálculo (para o cliente/Claude, ANTES de enviar os macros)
+
+- **Proteína** (carne, frango, peixe, camarão) **perde água**: 100g cru → ~70–80g cozido;
+  proteína/100g sobe no cozido. Peso **cru** → tabela de cru; peso **cozido** → tabela de cozido.
+- **Amido** (arroz, macarrão, batata, leguminosas) **absorve água**: 100g cru → ~250–300g
+  cozido (batata incha menos); carbo/100g cai no cozido. Mesma lógica de base de peso.
+- **Congelado com glaze** (camarão, peixe): descontar **~10–20% de gelo** antes de calcular.
+- Se o usuário não especificar cru/cozido: **perguntar** ou assumir o padrão mais provável
+  do alimento e **registrar a suposição** em `estado_coccao`/`base_peso`.
+
+> Persistência: edições de refeição usam `atualizar_refeicao` (UPDATE com commit) e refletem
+> em `resumo_diario`/`gerar_resumo_diario`. `executar_sql` também commita writes
+> (SELECT/WITH/SHOW/EXPLAIN/TABLE/VALUES = leitura; o resto roda com commit).
 
 ## Estrutura do projeto
 
