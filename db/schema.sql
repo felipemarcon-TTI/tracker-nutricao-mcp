@@ -147,6 +147,43 @@ ALTER TABLE meals ADD COLUMN IF NOT EXISTS cooking_state VARCHAR(20);
 ALTER TABLE meals ADD COLUMN IF NOT EXISTS portion_weight_g NUMERIC(7,2);
 ALTER TABLE meals ADD COLUMN IF NOT EXISTS portion_basis VARCHAR(20);
 
+-- Migration v4 -- Plano Alimentar 5 (26/08/2026), folato, suplementos, extensao body_metrics
+ALTER TABLE meals ADD COLUMN IF NOT EXISTS folate_mcg NUMERIC(7,2);
+
+ALTER TABLE body_metrics ADD COLUMN IF NOT EXISTS circ_arm_flexed_cm NUMERIC(5,2);
+ALTER TABLE body_metrics ADD COLUMN IF NOT EXISTS circ_forearm_cm NUMERIC(5,2);
+ALTER TABLE body_metrics ADD COLUMN IF NOT EXISTS source VARCHAR(30); -- 'balanca_casa' | 'bioimpedancia_clinica'
+
+CREATE TABLE IF NOT EXISTS supplement_log (
+    id SERIAL PRIMARY KEY,
+    taken_at TIMESTAMPTZ NOT NULL,
+    supplement VARCHAR NOT NULL,
+    dose_amount NUMERIC,
+    dose_unit VARCHAR,          -- 'mcg' | 'mg' | 'UI' | 'g'
+    prescribed_by VARCHAR,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Metas de macro por plano alimentar, versionadas por data de vigencia. Micros (RDA) nao mudam
+-- por plano e continuam hardcoded em METAS/server.py.
+CREATE TABLE IF NOT EXISTS plan_targets (
+    id SERIAL PRIMARY KEY,
+    effective_from DATE NOT NULL UNIQUE,
+    plan_name VARCHAR(50),
+    calories NUMERIC(7,2) NOT NULL,
+    protein_g NUMERIC(6,2) NOT NULL,
+    carbs_g NUMERIC(6,2) NOT NULL,
+    fat_g NUMERIC(6,2) NOT NULL,
+    fiber_g NUMERIC(6,2) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO plan_targets (effective_from, plan_name, calories, protein_g, carbs_g, fat_g, fiber_g) VALUES
+    ('2026-06-17', 'Plano Alimentar 4', 1721, 170.9, 146.4, 53.4, 32.6),
+    ('2026-08-26', 'Plano Alimentar 5', 1902, 185.5, 194.8, 46.5, 25.8)
+ON CONFLICT (effective_from) DO NOTHING;
+
 -- Indices para performance
 CREATE INDEX IF NOT EXISTS idx_meals_meal_time ON meals(meal_time);
 CREATE INDEX IF NOT EXISTS idx_nutrient_alerts_nutrient ON nutrient_alerts(nutrient);
