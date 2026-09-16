@@ -260,6 +260,12 @@ def inicializar_banco() -> str:
             "ON CONFLICT (effective_from) DO NOTHING;"
         )
     except Exception: pass
+    # Migration v5 -- taxonomia fixa de grupo muscular para volume_semanal_por_musculo/
+    # sugestao_variacao. So a coluna: o backfill dos ~33 exercicios desta base foi feito por
+    # ID via executar_sql (nomes divergem de seed.sql); exercicios novos nascem sem classificacao
+    # e aparecem em "exercicios_sem_classificacao" ate serem classificados manualmente.
+    try: db_e("ALTER TABLE exercises ADD COLUMN IF NOT EXISTS muscle_group_norm VARCHAR(30);")
+    except Exception: pass
     r = db_q("SELECT COUNT(*) as n FROM exercises")
     t = db_q("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
     return "Banco inicializado!\nTabelas: " + ", ".join(x["table_name"] for x in t) + "\nExercicios: " + str(r[0]["n"])
@@ -914,14 +920,190 @@ def buscar_exercicios(termo: str) -> str:
     if not rows: return f"Nenhum exercicio para '{termo}'."
     return "\n".join(f"[{r['muscle_group'] or '-'}] {r['name']} | {r['equipment'] or '-'}" for r in rows)
 
+def _e1rm(weight_kg, reps) -> float:
+    """Epley: 1RM estimado = peso x (1 + reps/30). Usado como proxy de intensidade
+    comparavel entre semanas mesmo quando reps variam."""
+    return float(weight_kg) * (1 + float(reps) / 30)
+
 @mcp.tool()
 def progressao_exercicio(nome_exercicio: str) -> str:
-    """Historico semanal de carga. Sinaliza plateau se 2+ semanas sem progressao."""
-    rows = db_q("SELECT DATE_TRUNC('week',w.workout_date::timestamptz) as sem,MAX(ws.weight_kg) as kg,MAX(ws.reps) as reps FROM workout_sets ws JOIN workouts w ON w.id=ws.workout_id WHERE LOWER(ws.exercise_name) LIKE LOWER(%s) GROUP BY 1 ORDER BY 1 DESC LIMIT 8",[f"%{nome_exercicio}%"])
-    if not rows: return f"Nenhum registo para '{nome_exercicio}'."
-    linhas = [f"Progressao '{nome_exercicio}':"] + [f"  {r['sem'].strftime('%d/%m/%Y')}: {r['kg']}kg x {r['reps']} reps" for r in rows]
-    if len(rows)>=2 and rows[0]["kg"]==rows[1]["kg"]: linhas.append("Plateau detectado.")
+    """Progressao dupla (carga x reps, com RPE quando disponivel) por semana, via e1RM
+    estimado (Epley) do melhor set de cada semana.
+    Com RPE do topset <=8 e e1RM parado: 'pronto para subir carga' (havia folga).
+    Com RPE >=9 e e1RM parado: plateau real — considere sugestao_variacao ou sinal_deload.
+    Sem RPE registrado (comum nesta base — confira com verificar_lembretes se vale passar a
+    registrar), reporta so a tendencia do e1RM, sem a distincao de folga."""
+    rows = db_q(
+        "SELECT DATE_TRUNC('week', w.workout_date::timestamptz) as sem, "
+        "ws.weight_kg as kg, ws.reps as reps, ws.rpe as rpe "
+        "FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id "
+        "WHERE LOWER(ws.exercise_name) LIKE LOWER(%s) AND ws.weight_kg IS NOT NULL AND ws.reps IS NOT NULL "
+        "ORDER BY w.workout_date, ws.id", [f"%{nome_exercicio}%"])
+    if not rows:
+        return f"Nenhum registo para '{nome_exercicio}'."
+    semanas = {}
+    for r in rows:
+        e1rm = _e1rm(r["kg"], r["reps"])
+        cur = semanas.get(r["sem"])
+        if cur is None or e1rm > cur["e1rm"]:
+            semanas[r["sem"]] = {"e1rm": e1rm, "kg": r["kg"], "reps": r["reps"], "rpe": r["rpe"]}
+    semanas_ord = sorted(semanas.items())[-8:]
+    linhas = [f"Progressao '{nome_exercicio}' (topset/semana, e1RM = Epley):"]
+    for sem, d in semanas_ord:
+        rpe_txt = f" RPE{d['rpe']}" if d["rpe"] is not None else " (sem RPE)"
+        linhas.append(f"  {sem.strftime('%d/%m/%Y')}: {d['kg']}kg x {d['reps']}{rpe_txt}  (e1RM ~{d['e1rm']:.1f}kg)")
+    if len(semanas_ord) >= 2:
+        e1rms = [d["e1rm"] for _, d in semanas_ord]
+        parado = abs(e1rms[-1] - e1rms[-2]) < 0.5 and (len(e1rms) < 3 or abs(e1rms[-1] - e1rms[-3]) < 1.0)
+        rpe_ultimo = semanas_ord[-1][1]["rpe"]
+        if parado and rpe_ultimo is not None:
+            if float(rpe_ultimo) <= 8:
+                linhas.append("Sinal: e1RM parado, mas RPE <=8 no topset — havia margem. Pronto para subir carga/reps.")
+            else:
+                linhas.append("Plateau: e1RM parado com RPE alto (perto da falha). Considere sugestao_variacao ou sinal_deload.")
+        elif parado:
+            linhas.append("e1RM parado nas ultimas semanas. RPE nao foi registrado — sem ele nao da pra saber se foi 'com folga' ou 'no limite'.")
     return "\n".join(linhas)
+
+@mcp.tool()
+def sugestao_variacao(nome_exercicio: str) -> str:
+    """Sugere alternativas do catalogo (mesmo muscle_group_norm, equipamento/movimento
+    diferente) SO quando ha plateau confirmado (e1RM parado nas ultimas 3 semanas).
+    Nao decide trocar — lista candidatos para avaliar. Nao classificado em muscle_group_norm
+    ou historico curto -> retorna sem sugestao em vez de arriscar um palpite."""
+    achado = db_q(
+        "SELECT id, name, muscle_group_norm, equipment, movement_pattern FROM exercises "
+        "WHERE LOWER(name) LIKE LOWER(%s) LIMIT 1", [f"%{nome_exercicio}%"])
+    if not achado:
+        return f"Exercicio '{nome_exercicio}' nao encontrado no catalogo."
+    ex = achado[0]
+    if not ex["muscle_group_norm"]:
+        return f"'{ex['name']}' nao tem muscle_group_norm classificado — nao da pra buscar alternativas com seguranca."
+    rows = db_q(
+        "SELECT DATE_TRUNC('week', w.workout_date::timestamptz) as sem, "
+        "MAX(ws.weight_kg * (1 + ws.reps::float/30)) as e1rm "
+        "FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id "
+        "WHERE ws.exercise_id = %s AND ws.weight_kg IS NOT NULL AND ws.reps IS NOT NULL "
+        "GROUP BY 1 ORDER BY 1 DESC LIMIT 3", [ex["id"]])
+    if len(rows) < 3:
+        return f"So {len(rows)} semana(s) de historico para '{ex['name']}' — cedo para falar em plateau (minimo 3)."
+    e1rms = [float(r["e1rm"]) for r in rows]
+    if max(e1rms) - min(e1rms) > 1.0:
+        return f"'{ex['name']}' esta progredindo (e1RM variou {min(e1rms):.1f}-{max(e1rms):.1f}kg nas ultimas 3 semanas) — sem necessidade de variar ainda."
+    candidatos = db_q(
+        "SELECT name, equipment, movement_pattern FROM exercises "
+        "WHERE muscle_group_norm = %s AND id != %s AND is_active = true "
+        "ORDER BY name", [ex["muscle_group_norm"], ex["id"]])
+    if not candidatos:
+        return f"Plateau confirmado em '{ex['name']}' (e1RM parado ha 3 semanas), mas nao ha outro exercicio classificado em '{ex['muscle_group_norm']}' no catalogo."
+    linhas = [f"Plateau confirmado em '{ex['name']}' (e1RM parado ha 3 semanas). Candidatos em '{ex['muscle_group_norm']}':"]
+    linhas += [f"  {c['name']} — {c['equipment'] or '-'} / {c['movement_pattern'] or '-'}" for c in candidatos]
+    return "\n".join(linhas)
+
+# Series efetivas/semana por grupo muscular — referencia hipertrofia (Israetel/Schoenfeld,
+# faixa MEV-MRV aproximada). Grupos sem exercicio classificado no catalogo (ex: gluteo,
+# antebraco) aparecem com 0 series — e um gap real, nao um erro da ferramenta.
+VOLUME_ALVO = {
+    "peito": (10, 20), "costas": (10, 20),
+    "ombro_anterior": (6, 12), "ombro_lateral": (8, 16), "ombro_posterior": (6, 12),
+    "biceps": (6, 14), "triceps": (6, 14), "antebraco": (0, 8),
+    "quadriceps": (8, 16), "posterior_coxa": (6, 12), "gluteo": (6, 12),
+    "adutores": (4, 8), "panturrilha": (8, 16), "abdomen": (0, 12),
+    "manguito_rotador": (4, 8),
+}
+
+@mcp.tool()
+def volume_semanal_por_musculo(semanas: int = 1) -> str:
+    """Series efetivas por grupo muscular nas ultimas N semanas (padrao: 1) vs faixa alvo de
+    hipertrofia, usando exercises.muscle_group_norm (taxonomia fixa, nao o texto livre
+    muscle_group). Exercicios sem classificacao ficam fora da contagem e sao listados
+    separadamente para voce (ou o Claude) classificar."""
+    fim = _hoje()
+    inicio = (datetime.now(USER_TZ) - timedelta(days=semanas * 7 - 1)).strftime("%Y-%m-%d")
+    rows = db_q(
+        "SELECT e.muscle_group_norm as grupo, COUNT(ws.id) as series "
+        "FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id "
+        "JOIN exercises e ON e.id = ws.exercise_id "
+        "WHERE w.workout_date BETWEEN %s AND %s AND NOT COALESCE(w.skipped, false) "
+        "GROUP BY e.muscle_group_norm", [inicio, fim])
+    contagem = {r["grupo"]: int(r["series"]) for r in rows if r["grupo"]}
+    sem_classificacao = db_q(
+        "SELECT DISTINCT e.name FROM workout_sets ws "
+        "JOIN workouts w ON w.id = ws.workout_id JOIN exercises e ON e.id = ws.exercise_id "
+        "WHERE w.workout_date BETWEEN %s AND %s AND e.muscle_group_norm IS NULL", [inicio, fim])
+    grupos = {}
+    for grupo, (lo, hi) in VOLUME_ALVO.items():
+        n_semanal = round(contagem.get(grupo, 0) / semanas, 1)
+        status = "abaixo" if n_semanal < lo else ("acima" if n_semanal > hi else "ok")
+        grupos[grupo] = {"series_por_semana": n_semanal, "faixa_alvo": [lo, hi], "status": status}
+    resultado = {
+        "periodo": f"{inicio} a {fim}", "semanas": semanas,
+        "grupos_musculares": grupos,
+        "exercicios_sem_classificacao": [r["name"] for r in sem_classificacao],
+    }
+    return json.dumps(resultado, default=str, ensure_ascii=False, indent=2)
+
+@mcp.tool()
+def sinal_deload(sessoes: int = 6) -> str:
+    """Cruza volume/carga, RPE, energia e sono das ultimas N sessoes nao puladas (padrao: 6)
+    para sugerir deload (~40% menos volume por 1 semana). E um sinal para avaliar junto com o
+    Claude, nao uma decisao automatica. RPE/energia/sono sem dado ou sem variacao (comum nesta
+    base — RPE nunca foi registrado e energia fica sempre no mesmo valor) aparecem em
+    'dados_indisponiveis_ou_sem_variacao', nao sao ignorados silenciosamente."""
+    rows = db_q(
+        "SELECT w.id, w.workout_date, w.energy_level, w.sleep_quality, "
+        "AVG(ws.rpe) as rpe_medio, COALESCE(SUM(ws.weight_kg * ws.reps), 0) as volume "
+        "FROM workouts w LEFT JOIN workout_sets ws ON ws.workout_id = w.id "
+        "WHERE NOT COALESCE(w.skipped, false) "
+        "GROUP BY w.id ORDER BY w.workout_date DESC LIMIT %s", [sessoes])
+    if len(rows) < 3:
+        return f"Apenas {len(rows)} sessao(oes) registrada(s) — minimo 3 para avaliar tendencia."
+    rows = list(reversed(rows))  # ordem cronologica
+
+    def tendencia(vals):
+        """2a metade vs 1a metade. None se pouco dado ou sem variacao nenhuma."""
+        if len(vals) < 3 or len(set(vals)) <= 1:
+            return None
+        meio = len(vals) // 2
+        return (sum(vals[meio:]) / len(vals[meio:])) - (sum(vals[:meio]) / len(vals[:meio]))
+
+    volumes = [float(r["volume"]) for r in rows]
+    rpes = [float(r["rpe_medio"]) for r in rows if r["rpe_medio"] is not None]
+    energias = [r["energy_level"] for r in rows if r["energy_level"] is not None]
+    sonos = [r["sleep_quality"] for r in rows if r["sleep_quality"] is not None]
+
+    sinais, indisponiveis = [], []
+    tv = tendencia(volumes)
+    if tv is not None and tv < 0 and volumes[0] > 0 and abs(tv) / volumes[0] > 0.1:
+        sinais.append(f"volume de treino caindo (~{abs(tv) / volumes[0] * 100:.0f}% entre a 1a e a 2a metade do periodo)")
+    if len(rpes) >= 3:
+        tr = tendencia(rpes)
+        if tr is not None and tr > 0.5:
+            sinais.append(f"RPE medio subindo (+{tr:.1f} entre a 1a e a 2a metade)")
+        if rpes[-1] >= 9:
+            sinais.append(f"RPE medio da ultima sessao muito alto ({rpes[-1]:.1f})")
+    else:
+        indisponiveis.append(f"RPE registrado em so {len(rpes)}/{len(rows)} sessoes — sem dado suficiente")
+    if len(energias) >= 3 and len(set(energias)) > 1:
+        te = tendencia(energias)
+        if te is not None and te < -0.5:
+            sinais.append("energia relatada em queda")
+    else:
+        indisponiveis.append("energia sem variacao ou dado insuficiente nas ultimas sessoes")
+    if len(sonos) >= 3 and len(set(sonos)) > 1:
+        ts = tendencia(sonos)
+        if ts is not None and ts < -0.5:
+            sinais.append("qualidade de sono em queda")
+    else:
+        indisponiveis.append("qualidade de sono sem variacao ou dado insuficiente nas ultimas sessoes")
+
+    resultado = {
+        "sessoes_avaliadas": len(rows),
+        "sinais_de_fadiga": sinais,
+        "dados_indisponiveis_ou_sem_variacao": indisponiveis,
+        "recomendacao": "considerar deload (~40% menos volume por 1 semana)" if len(sinais) >= 2 else "sem sinal forte de deload no momento",
+    }
+    return json.dumps(resultado, default=str, ensure_ascii=False, indent=2)
 
 @mcp.tool()
 def gerar_resumo_diario(data: str = None, treinou: bool = None, notas_treino: str = None, agua_ml: int = None) -> str:

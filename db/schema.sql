@@ -184,6 +184,13 @@ INSERT INTO plan_targets (effective_from, plan_name, calories, protein_g, carbs_
     ('2026-08-26', 'Plano Alimentar 5', 1902, 185.5, 194.8, 46.5, 25.8)
 ON CONFLICT (effective_from) DO NOTHING;
 
+-- Migration v5 -- taxonomia fixa de grupo muscular (volume_semanal_por_musculo, sugestao_variacao).
+-- Valores esperados: peito, costas, ombro_anterior, ombro_lateral, ombro_posterior, biceps,
+-- triceps, antebraco, quadriceps, posterior_coxa, gluteo, adutores, panturrilha, abdomen,
+-- manguito_rotador, cardio. Backfill do catalogo existente feito via UPDATE ad-hoc (nao aqui,
+-- pois os nomes reais divergem do seed generico acima); exercicio novo nasce sem classificacao.
+ALTER TABLE exercises ADD COLUMN IF NOT EXISTS muscle_group_norm VARCHAR(30);
+
 -- Indices para performance
 CREATE INDEX IF NOT EXISTS idx_meals_meal_time ON meals(meal_time);
 CREATE INDEX IF NOT EXISTS idx_nutrient_alerts_nutrient ON nutrient_alerts(nutrient);
